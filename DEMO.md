@@ -1,4 +1,23 @@
-# NEXUS-R Demo Script
+# CodeCommit scenario walkthrough
+
+## Setup
+
+1. Backend: `uvicorn app.main:app --reload` at http://localhost:8000
+2. Frontend: `npm run dev` at http://localhost:3000
+
+## Flow
+
+1. Open **Scenario Simulator**
+2. **Reset Scenario** then **Load Scenario**
+3. Confirm five zones, incidents, resources, and an initial allocation
+4. Open **Coordination** and approve one pending action
+5. Refresh — the task remains approved
+6. Return to Scenario Simulator → **Inject Urgent Report**
+7. Confirm allocation delta (teams moving toward Zone A)
+8. Approve a revised task
+9. Open **Agents** and **Audit** for the event chain
+
+Product language only in the UI. This file is internal.
 
 ## Pre-Demo Setup (5 minutes before)
 

@@ -1,8 +1,53 @@
-# NEXUS-R — Agentic Disaster Resource Orchestration Platform
+# CodeCommit — Emergency Resource Orchestration Platform
 
-**Problem Statement:** PS20 — Agentic Disaster Relief & Emergency Resource Coordinator  
-**Team:** CodeCommit  
+**Internal mapping:** PS20 — Agentic Disaster Relief & Emergency Resource Coordinator  
 **Repository:** https://github.com/tmboss007/CodeCommit
+
+## Overview
+
+CodeCommit is a closed-loop emergency resource orchestration system. It allocates resources from live operational state, then re-plans when the situation changes.
+
+Understand the incident. Optimize the response. Re-plan when reality changes.
+
+### Core Capabilities
+
+- Incident reporting and situation analysis
+- Deterministic needs assessment and priority scoring
+- Duplicate incident detection
+- Constraint-based resource optimization (Google OR-Tools) — IMPLEMENTED
+- Dynamic re-planning when disaster state changes
+- Inter-agency coordination with human approval
+- Audit trail
+- MapLibre command center — IMPLEMENTED
+- Live dashboard updates — polling (not WebSockets)
+
+## Local run (MVP)
+
+The working local MVP uses **SQLite**. PostgreSQL/PostGIS/Redis are not required to start.
+
+```bash
+# Backend
+cd backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements-simple.txt
+# .env should include DATABASE_URL=sqlite:///./nexus_r.db
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+# Frontend
+cd frontend
+npm install
+# .env.local: NEXT_PUBLIC_API_URL=http://localhost:8000
+npm run dev
+```
+
+- App: http://localhost:3000
+- API: http://localhost:8000
+- Docs: http://localhost:8000/docs
+
+Optional: `docker compose up --build`
+
+Then in **Scenario Simulator**: Load Scenario → Inject Urgent Report → Coordination (Approve).
 
 ## Overview
 
@@ -48,17 +93,18 @@ Field Reports → Situation Agent → Needs Agent → Priority Agent
 **Backend:**
 - Python 3.11+
 - FastAPI
-- PostgreSQL + PostGIS
-- Redis
-- WebSockets
+- SQLite (default local MVP)
+- PostgreSQL + PostGIS — PLANNED, not default
+- REST APIs; polling for live UI
 
 **Agent Orchestration:**
-- LangGraph
-- OpenAI API / Anthropic Claude
+- Heuristic situation/duplicate agents (default)
+- Optional OpenAI / Anthropic if keys are set
+- LangGraph — NOT IMPLEMENTED
 
 **Optimization:**
 - Google OR-Tools
-- NetworkX
+- NetworkX / geodesic distance
 
 ## Setup
 
@@ -122,11 +168,11 @@ The system simulates a multi-zone disaster response:
 
 ### Demo Controls
 
-- Load Demo Scenario
+- Load Scenario
 - Inject Urgent Report
 - Block Route
 - Disable Resource
-- Reset Simulation
+- Reset Scenario
 
 ## API Overview
 
@@ -154,15 +200,20 @@ See [API.md](./API.md) for full documentation.
 - ✅ Dynamic re-planning on state changes
 - ✅ Human-in-the-loop approval workflow
 - ✅ Complete audit trail
-- ✅ Real-time dashboard with WebSocket updates
+- ✅ Real-time dashboard with polling updates
 - ✅ Interactive map with MapLibre
-- ✅ Simulation controls
+- ✅ Scenario Simulator controls
 
-### SIMULATED (Mock Mode)
-- 🔄 IMD weather data (adapter implemented)
-- 🔄 GDACS disaster events (adapter implemented)
-- 🔄 MOSDAC satellite data (adapter implemented)
-- 🔄 Routing/ETA calculation (realistic simulation)
+### SIMULATED
+- IMD weather data — adapter + mock
+- GDACS disaster events — adapter + mock
+- MOSDAC satellite data — adapter + mock
+- Routing/ETA — distance simulation
+
+### NOT IMPLEMENTED
+- WebSockets (HTTP polling is used)
+- LangGraph orchestration
+- Live PostgreSQL/PostGIS in the default local path
 
 ## Testing
 
@@ -181,13 +232,10 @@ pytest tests/test_e2e_scenario.py
 
 ## Limitations
 
-This is a hackathon MVP:
-
 - External data sources run in simulation mode
 - Routing uses distance-based ETA estimates
-- Single-region deployment
+- Default local database is SQLite
 - No authentication system
-- Simplified resource types
 - Demo-scale data only
 
 ## Documentation
@@ -201,7 +249,3 @@ This is a hackathon MVP:
 ## License
 
 MIT
-
----
-
-🤖 Built for PS20 Hackathon

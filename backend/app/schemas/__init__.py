@@ -19,6 +19,7 @@ class Zone(ZoneBase):
     id: str
     created_at: datetime
     updated_at: datetime
+    priority_breakdown: Optional[dict] = None
 
     class Config:
         from_attributes = True
@@ -41,6 +42,7 @@ class Incident(IncidentBase):
     confidence: Optional[float]
     status: str
     duplicate_group_id: Optional[str]
+    duplicate_status: Optional[str] = "NEW"
     created_at: datetime
 
     class Config:

@@ -1,0 +1,12 @@
+Backend is ready. Run these commands:
+
+Terminal 1 - Backend:
+cd "C:\MIT Pune'\REACT\backend"
+start.bat
+
+Terminal 2 - Frontend:
+cd "C:\MIT Pune'\REACT\frontend"
+npm install
+npm run dev
+
+Then open http://localhost:3000

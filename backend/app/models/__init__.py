@@ -1,6 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Boolean, ForeignKey, Text
 from sqlalchemy.orm import relationship
-from geoalchemy2 import Geometry
 from datetime import datetime
 from app.core.database import Base
 
@@ -9,13 +8,13 @@ class Zone(Base):
 
     id = Column(String, primary_key=True)
     name = Column(String, nullable=False)
-    location = Column(Geometry('POINT', srid=4326), nullable=False)
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
     population = Column(Integer, default=0)
     vulnerable_population = Column(Integer, default=0)
     severity = Column(Float, default=0)
     priority_score = Column(Float, default=0)
+    priority_breakdown = Column(JSON)
     status = Column(String, default="active")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -34,12 +33,12 @@ class Incident(Base):
     report_text = Column(Text, nullable=False)
     incident_type = Column(String)
     timestamp = Column(DateTime, default=datetime.utcnow)
-    location = Column(Geometry('POINT', srid=4326))
     affected_population = Column(Integer)
     vulnerable_population = Column(Integer)
     confidence = Column(Float)
     status = Column(String, default="active")
     duplicate_group_id = Column(String)
+    duplicate_status = Column(String, default="NEW")
     analysis_result = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -85,7 +84,6 @@ class Resource(Base):
     name = Column(String, nullable=False)
     type = Column(String, nullable=False)
     agency_id = Column(String, ForeignKey("agencies.id"), nullable=False)
-    location = Column(Geometry('POINT', srid=4326))
     latitude = Column(Float)
     longitude = Column(Float)
     quantity = Column(Float)
@@ -114,8 +112,10 @@ class Allocation(Base):
     reason = Column(Text)
     status = Column(String, default="pending")
     plan_id = Column(String)
+    from_zone_id = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     approved_at = Column(DateTime)
+    approved_by = Column(String)
 
     resource = relationship("Resource", back_populates="allocations")
     zone = relationship("Zone", back_populates="allocations")
@@ -162,3 +162,17 @@ class ReplanningEvent(Base):
     delta = Column(JSON)
     timestamp = Column(DateTime, default=datetime.utcnow)
     correlation_id = Column(String)
+
+
+class AppState(Base):
+    __tablename__ = "app_state"
+
+    id = Column(String, primary_key=True, default="singleton")
+    last_plan_id = Column(String)
+    last_snapshot = Column(JSON)
+    last_delta = Column(JSON)
+    last_unmet = Column(JSON)
+    last_explanation = Column(Text)
+    blocked_routes = Column(JSON)
+    data_mode = Column(String, default="SIMULATION")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

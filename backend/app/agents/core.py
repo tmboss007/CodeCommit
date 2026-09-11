@@ -1,31 +1,35 @@
-from typing import Dict, Optional, List
-from openai import OpenAI
-from anthropic import Anthropic
-import json
+from typing import Dict, List, Optional
 import os
+from app.services.situation_heuristic import analyze_report_heuristic, duplicate_status_heuristic
 
 class LLMClient:
-    """Unified LLM client supporting OpenAI and Anthropic."""
+    """Unified LLM client supporting OpenAI and Anthropic. Optional — demo works without keys."""
 
     def __init__(self):
         self.provider = os.getenv("LLM_PROVIDER", "openai")
         self.model = os.getenv("LLM_MODEL", "gpt-4-turbo-preview")
+        self.client = None
+        self.available = False
 
-        if self.provider == "openai":
+        if self.provider == "openai" and os.getenv("OPENAI_API_KEY"):
+            from openai import OpenAI
             self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        elif self.provider == "anthropic":
+            self.available = True
+        elif self.provider == "anthropic" and os.getenv("ANTHROPIC_API_KEY"):
+            from anthropic import Anthropic
             self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-        else:
-            raise ValueError(f"Unsupported LLM provider: {self.provider}")
+            self.available = True
 
     def generate_structured(self, prompt: str, system: str = "") -> Dict:
-        """Generate structured JSON output."""
+        if not self.available:
+            raise RuntimeError("LLM provider not configured")
+        import json
+
         if self.provider == "openai":
             messages = []
             if system:
                 messages.append({"role": "system", "content": system})
             messages.append({"role": "user", "content": prompt})
-
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -34,21 +38,20 @@ class LLMClient:
             )
             return json.loads(response.choices[0].message.content)
 
-        elif self.provider == "anthropic":
-            full_prompt = f"{system}\n\n{prompt}\n\nProvide response as valid JSON."
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=2048,
-                temperature=0.1,
-                messages=[{"role": "user", "content": full_prompt}]
-            )
-            content = response.content[0].text
-            # Extract JSON from markdown if present
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0].strip()
-            return json.loads(content)
+        full_prompt = f"{system}\n\n{prompt}\n\nProvide response as valid JSON."
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=2048,
+            temperature=0.1,
+            messages=[{"role": "user", "content": full_prompt}]
+        )
+        content = response.content[0].text
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        return json.loads(content)
+
 
 class SituationAgent:
     """Extract structured information from incident reports."""
@@ -57,34 +60,13 @@ class SituationAgent:
         self.llm = LLMClient()
 
     def analyze_report(self, report_text: str, zone_id: Optional[str] = None) -> Dict:
-        """
-        Analyze incident report and extract structured information.
+        heuristic = analyze_report_heuristic(report_text, zone_id)
+        if not self.llm.available:
+            return heuristic
 
-        Returns:
-        {
-            "zone_id": str,
-            "incident_type": str,
-            "affected_population": int,
-            "vulnerable_population": int,
-            "severity": float (0-10),
-            "needs": [{"type": str, "quantity": int}],
-            "confidence": float (0-1)
-        }
-        """
         system = """You are a disaster situation analysis agent. Extract structured information from incident reports.
-
 Classify incident_type as one of: flood, earthquake, cyclone, fire, landslide, other
-
-Severity scale (0-10):
-0-2: Minor, limited impact
-3-4: Moderate, localized damage
-5-6: Serious, significant damage
-7-8: Severe, widespread damage
-9-10: Catastrophic, extreme damage
-
-Estimate affected_population and vulnerable_population (elderly, children, disabled) if mentioned.
-Identify needed resource types: rescue_team, medical_kit, water_liter, food_packet, shelter_capacity
-
+Severity scale (0-10). Do not invent exact population counts if they are not stated — use null.
 Return valid JSON only."""
 
         prompt = f"""Analyze this incident report:
@@ -92,45 +74,34 @@ Return valid JSON only."""
 Report: {report_text}
 {f"Zone: {zone_id}" if zone_id else ""}
 
-Extract:
-- incident_type
-- affected_population (estimate if not explicit)
-- vulnerable_population (estimate ~15-20% if not mentioned)
-- severity (0-10 scale)
-- needs (list of resource types needed)
-- confidence (how confident in this analysis, 0-1)
-
 JSON format:
 {{
     "zone_id": "{zone_id or 'unknown'}",
     "incident_type": "flood",
-    "affected_population": 1000,
-    "vulnerable_population": 150,
+    "affected_population": null,
+    "vulnerable_population": null,
     "severity": 7.5,
-    "needs": [{{"type": "rescue_team", "quantity": 3}}],
+    "required_resource_types": ["rescue_team"],
     "confidence": 0.85
 }}"""
-
         try:
             result = self.llm.generate_structured(prompt, system)
             result["agent"] = "situation"
+            result["source_mode"] = "LLM"
+            if not result.get("zone_id") or result.get("zone_id") == "unknown":
+                result["zone_id"] = heuristic["zone_id"]
+            if result.get("affected_population") is None:
+                result["affected_population"] = heuristic.get("affected_population")
+            if result.get("vulnerable_population") is None:
+                result["vulnerable_population"] = heuristic.get("vulnerable_population")
             return result
         except Exception as e:
-            # Fallback to default structure
-            return {
-                "zone_id": zone_id or "unknown",
-                "incident_type": "other",
-                "affected_population": 500,
-                "vulnerable_population": 75,
-                "severity": 5.0,
-                "needs": [{"type": "rescue_team", "quantity": 1}],
-                "confidence": 0.3,
-                "agent": "situation",
-                "error": str(e)
-            }
+            heuristic["error"] = str(e)
+            return heuristic
+
 
 class DuplicateDetectionAgent:
-    """Detect duplicate or overlapping incident reports."""
+    """Hybrid duplicate detection: zone, time, type, text overlap. LLM optional."""
 
     def __init__(self):
         self.llm = LLMClient()
@@ -138,71 +109,24 @@ class DuplicateDetectionAgent:
     def check_duplicate(
         self,
         new_report: str,
-        existing_incidents: List[Dict]
+        existing_incidents: List[Dict],
+        zone_id: str = "",
+        incident_type: str = "other",
     ) -> Dict:
-        """
-        Check if new report is duplicate of existing incidents.
-
-        Returns:
-        {
-            "is_duplicate": bool,
-            "matched_incidents": [str],  # incident IDs
-            "similarity_score": float,
-            "explanation": str
-        }
-        """
-        if not existing_incidents:
-            return {
-                "is_duplicate": False,
-                "matched_incidents": [],
-                "similarity_score": 0.0,
-                "explanation": "No existing incidents to compare"
-            }
-
-        system = """You are a duplicate incident detection agent. Determine if a new report describes the same incident as existing reports.
-
-Consider:
-- Geographic proximity (same zone)
-- Time proximity (within hours)
-- Incident type
-- Semantic similarity of descriptions
-
-is_duplicate = true only if HIGH confidence (>0.8) same incident
-similarity_score = 0.0 to 1.0"""
-
-        existing_summary = "\n".join([
-            f"ID: {inc['id']}, Zone: {inc.get('zone_id')}, Type: {inc.get('incident_type')}, "
-            f"Time: {inc.get('timestamp')}, Report: {inc.get('report_text', '')[:100]}..."
-            for inc in existing_incidents[:5]  # Limit to 5 most recent
-        ])
-
-        prompt = f"""New report: {new_report}
-
-Existing incidents:
-{existing_summary}
-
-Analyze if new report duplicates any existing incident.
-
-JSON format:
-{{
-    "is_duplicate": false,
-    "matched_incidents": [],
-    "similarity_score": 0.75,
-    "explanation": "Similar to incident X but different location"
-}}"""
-
+        heuristic = duplicate_status_heuristic(new_report, existing_incidents, zone_id, incident_type)
+        if not existing_incidents or not self.llm.available:
+            return heuristic
         try:
-            result = self.llm.generate_structured(prompt, system)
+            result = self.llm.generate_structured(
+                f"New report: {new_report}\nExisting: {existing_incidents[:5]}\nReturn JSON with is_duplicate, matched_incidents, similarity_score, explanation",
+                "You detect duplicate disaster reports. is_duplicate true only if confidence > 0.8."
+            )
             result["agent"] = "duplicate_detection"
+            result.setdefault("duplicate_status", "CONFIRMED_DUPLICATE" if result.get("is_duplicate") else "NEW")
             return result
-        except Exception as e:
-            return {
-                "is_duplicate": False,
-                "matched_incidents": [],
-                "similarity_score": 0.0,
-                "explanation": f"Analysis failed: {str(e)}",
-                "agent": "duplicate_detection"
-            }
+        except Exception:
+            return heuristic
+
 
 class CoordinationAgent:
     """Generate actionable tasks for agencies."""
@@ -214,34 +138,24 @@ class CoordinationAgent:
         zones_map: Dict[str, Dict],
         agencies_map: Dict[str, Dict]
     ) -> List[Dict]:
-        """Generate coordination tasks from allocations."""
         tasks = []
-
         for alloc in allocations:
             resource = resources_map.get(alloc['resource_id'])
             zone = zones_map.get(alloc['zone_id'])
-
             if not resource or not zone:
                 continue
-
             agency = agencies_map.get(resource['agency_id'])
             if not agency:
                 continue
-
-            action = self._format_action(resource, zone, alloc)
-
             tasks.append({
                 "agency_id": agency['id'],
                 "allocation_id": alloc['id'],
-                "action": action,
+                "action": self._format_action(resource, zone, alloc),
                 "status": "pending"
             })
-
         return tasks
 
     def _format_action(self, resource: Dict, zone: Dict, allocation: Dict) -> str:
-        """Format human-readable action description."""
         qty_str = f"{allocation.get('quantity', 1)} {resource.get('unit', 'unit(s)')}" if allocation.get('quantity') else ""
         eta_str = f"ETA: {allocation.get('eta_minutes', 'unknown')} minutes" if allocation.get('eta_minutes') else ""
-
         return f"Deploy {resource['name']} {qty_str} to {zone['name']}. {eta_str}. Priority: {allocation.get('priority', 'N/A')}"

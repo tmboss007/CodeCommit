@@ -1,11 +1,36 @@
-# NEXUS-R Setup Guide
+# CodeCommit Setup Guide
+
+The **supported local path** is SQLite. You do not need PostgreSQL, PostGIS, or Redis to run the product.
+
+```bash
+cd backend
+python -m venv venv
+venv\Scripts\activate   # macOS/Linux: source venv/bin/activate
+pip install -r requirements-simple.txt
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+```bash
+cd frontend
+npm install
+copy .env.local.example .env.local   # already points at http://localhost:8000
+npm run dev
+```
+
+Load a scenario from **Scenario Simulator** in the app.
+
+The remainder of this file documents an optional PostgreSQL/PostGIS production-style setup that is **PLANNED / not the default MVP**.
+
+---
+
+# Optional PostgreSQL notes (not required)
 
 ## Prerequisites
 
 - Python 3.11+
 - Node.js 18+
-- PostgreSQL 14+ with PostGIS extension
-- Redis 6+
+- PostgreSQL 14+ with PostGIS extension (optional)
+- Redis 6+ (optional; unused by the default app)
 
 ## Backend Setup
 

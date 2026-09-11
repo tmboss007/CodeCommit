@@ -1,14 +1,14 @@
-# NEXUS-R System Architecture
+# CodeCommit System Architecture
 
 ## Overview
 
-NEXUS-R is a closed-loop disaster resource orchestration platform that uses multi-agent AI systems combined with constraint-based optimization to dynamically allocate emergency resources.
+CodeCommit is a closed-loop emergency resource orchestration platform. It combines structured incident interpretation with deterministic scoring, needs calculation, and OR-Tools allocation.
+
+Internal codebase name remains NEXUS-R in some modules.
 
 ## Core Principle
 
-**Traditional systems**: Static resource allocation → Manual reallocation when conditions change
-
-**NEXUS-R**: Continuous monitoring → AI analysis → Optimization → Action → State change detection → Re-planning
+Static allocation is insufficient. When incident state changes, the system reassesses priority, detects conflicts, re-optimizes, and requests human approval.
 
 ## Architecture Diagram
 

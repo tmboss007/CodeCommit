@@ -1,173 +1,194 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { zonesAPI, incidentsAPI, resourcesAPI, auditAPI } from '@/lib/api';
-import type { Zone, Incident, Resource, AuditEvent } from '@/types';
-import { formatRelativeTime, getPriorityColor, getSeverityColor, getStatusColor } from '@/lib/utils';
-import Link from 'next/link';
+import dynamic from 'next/dynamic';
+import { useCallback, useEffect, useState } from 'react';
+import { snapshotAPI } from '../lib/api';
+import { AllocationDelta } from '../components/AllocationDelta';
+import { PriorityBreakdown } from '../components/PriorityBreakdown';
+import { formatRelativeTime } from '../lib/utils';
+import { EmptyState, ErrorBanner } from '../components/Status';
+
+const MapView = dynamic(() => import('../components/MapView').then((m) => m.MapView), { ssr: false });
 
 export default function CommandCenter() {
-  const [zones, setZones] = useState<Zone[]>([]);
-  const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [resources, setResources] = useState<Resource[]>([]);
-  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 10000); // Refresh every 10s
-    return () => clearInterval(interval);
+  const load = useCallback(async () => {
+    try {
+      const res = await snapshotAPI.get();
+      setData(res.data);
+      setError(null);
+    } catch {
+      setError('Unable to reach the operations API. Check that the backend is running on port 8000.');
+    }
   }, []);
 
-  const loadData = async () => {
-    try {
-      const [zonesRes, incidentsRes, resourcesRes, auditRes] = await Promise.all([
-        zonesAPI.list(),
-        incidentsAPI.list({ limit: 10 }),
-        resourcesAPI.list(),
-        auditAPI.list({ limit: 20 }),
-      ]);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [load]);
 
-      setZones(zonesRes.data);
-      setIncidents(incidentsRes.data);
-      setResources(resourcesRes.data);
-      setAuditEvents(auditRes.data);
-      setLoading(false);
-    } catch (error) {
-      console.error('Failed to load data:', error);
-      setLoading(false);
-    }
-  };
+  if (!data && error) return <ErrorBanner message={error} />;
+  if (!data) return <div className="text-slate-300">Loading operational state…</div>;
 
-  const stats = {
-    activeIncidents: incidents.filter((i) => i.status === 'active').length,
-    criticalZones: zones.filter((z) => z.priority_score >= 80).length,
-    availableResources: resources.filter((r) => r.status === 'available').length,
-    deployedResources: resources.filter((r) => r.status === 'deployed').length,
-  };
+  const m = data.metrics || {};
+  const zones = data.zones || [];
+  const resources = data.resources || [];
+  const incidents = data.incidents || [];
+  const pending = (data.tasks || []).filter((t: any) => t.status === 'pending');
+  const moves = data.delta?.moves || [];
+  const zoneById = Object.fromEntries(zones.map((z: any) => [z.id, z]));
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-xl">Loading...</div>
-      </div>
-    );
-  }
+  const routes = (data.allocations || [])
+    .map((a: any) => {
+      const res = resources.find((r: any) => r.id === a.resource_id);
+      const zone = zoneById[a.zone_id];
+      if (!res?.longitude || !zone?.longitude) return null;
+      return { id: a.id, from: [res.longitude, res.latitude], to: [zone.longitude, zone.latitude] };
+    })
+    .filter(Boolean);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-blue-600 text-white p-4 shadow-lg">
-        <div className="container mx-auto">
-          <h1 className="text-2xl font-bold">NEXUS-R Command Center</h1>
-          <p className="text-blue-100 text-sm">Agentic Disaster Resource Orchestration Platform</p>
+    <div className="space-y-6">
+      {error && <ErrorBanner message={error} />}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold tracking-[0.2em] text-slate-400">CODECOMMIT</div>
+          <h1 className="text-2xl font-bold text-white">Emergency Resource Command Center</h1>
+          <p className="text-sm text-slate-400">Understand the incident. Optimize the response. Re-plan when reality changes.</p>
         </div>
-      </header>
-
-      <div className="container mx-auto p-6">
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <StatCard title="Active Incidents" value={stats.activeIncidents} color="red" />
-          <StatCard title="Critical Zones" value={stats.criticalZones} color="orange" />
-          <StatCard title="Available Resources" value={stats.availableResources} color="green" />
-          <StatCard title="Deployed Resources" value={stats.deployedResources} color="blue" />
-        </div>
-
-        {/* Main Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Zones Priority */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Zone Priority</h2>
-            <div className="space-y-3">
-              {zones
-                .sort((a, b) => b.priority_score - a.priority_score)
-                .slice(0, 5)
-                .map((zone) => (
-                  <div key={zone.id} className="flex items-center justify-between border-b pb-2">
-                    <div>
-                      <div className="font-medium">{zone.name}</div>
-                      <div className="text-sm text-gray-500">
-                        Severity: <span className={`inline-block w-16 h-2 ${getSeverityColor(zone.severity)} rounded`}></span>
-                      </div>
-                    </div>
-                    <div className={`text-2xl font-bold ${getPriorityColor(zone.priority_score)}`}>
-                      {zone.priority_score.toFixed(0)}
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </div>
-
-          {/* Recent Incidents */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Recent Incidents</h2>
-            <div className="space-y-3">
-              {incidents.slice(0, 5).map((incident) => (
-                <div key={incident.id} className="border-b pb-2">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="font-medium text-sm">{incident.report_text.slice(0, 80)}...</div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {incident.zone_id} • {formatRelativeTime(incident.timestamp)}
-                      </div>
-                    </div>
-                    <span className={`px-2 py-1 text-xs rounded ${getStatusColor(incident.status)}`}>
-                      {incident.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Activity Stream */}
-          <div className="bg-white rounded-lg shadow p-6 lg:col-span-2">
-            <h2 className="text-lg font-semibold mb-4">Activity Stream</h2>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {auditEvents.map((event) => (
-                <div key={event.id} className="flex items-start space-x-3 text-sm border-b pb-2">
-                  <div className="text-gray-400 text-xs w-16 flex-shrink-0">
-                    {new Date(event.timestamp).toLocaleTimeString()}
-                  </div>
-                  <div className="flex-1">
-                    <span className="font-medium text-blue-600">{event.agent || event.actor}</span>
-                    <span className="text-gray-600"> • {event.description}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="mt-6 flex gap-4">
-          <Link href="/incidents" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-            View All Incidents
-          </Link>
-          <Link href="/resources" className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
-            Manage Resources
-          </Link>
-          <Link href="/coordination" className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">
-            Coordination Tasks
-          </Link>
-        </div>
+        {data.last_plan_id && <div className="text-xs text-slate-500">Active plan {data.last_plan_id}</div>}
       </div>
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+        <Stat label="Critical Zones" value={m.critical_zones} />
+        <Stat label="Active Incidents" value={m.active_incidents} />
+        <Stat label="Available Resources" value={m.available_resources} />
+        <Stat label="Deployed Resources" value={m.deployed_resources} />
+        <Stat label="Unmet Critical Demand" value={Math.round(m.unmet_critical_demand || 0)} />
+        <Stat label="Response Coverage" value={`${m.response_coverage ?? 0}%`} />
+      </div>
+
+      <MapView
+        zones={zones.map((z: any) => ({
+          id: z.id,
+          latitude: z.latitude,
+          longitude: z.longitude,
+          label: `${z.name} · response priority ${Number(z.priority_score || 0).toFixed(0)}`,
+          color: z.priority_score >= 80 ? '#ef4444' : z.priority_score >= 60 ? '#f97316' : '#38bdf8',
+        }))}
+        resources={resources.map((r: any) => ({
+          id: r.id,
+          latitude: r.latitude,
+          longitude: r.longitude,
+          label: `${r.name} (${(r.status || '').toUpperCase()})`,
+          color: r.status === 'available' ? '#22c55e' : '#a855f7',
+        }))}
+        incidents={incidents.map((i: any) => {
+          const z = zoneById[i.zone_id];
+          return {
+            id: i.id,
+            latitude: z?.latitude,
+            longitude: z?.longitude,
+            label: `${i.incident_type || 'incident'} · ${i.zone_id}`,
+            color: '#f43f5e',
+          };
+        })}
+        routes={routes}
+      />
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Panel title="Priority Queue">
+          {zones.length === 0 ? (
+            <EmptyState title="No zones loaded" hint="Use Scenario Simulator → Load Scenario." />
+          ) : (
+            zones
+              .slice()
+              .sort((a: any, b: any) => b.priority_score - a.priority_score)
+              .map((z: any) => (
+                <div key={z.id} className="mb-3 border-b border-slate-800 pb-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-medium text-white">{z.name}</div>
+                      <div className="text-xs text-slate-400">Severity {Number(z.severity || 0).toFixed(1)} / 10</div>
+                    </div>
+                    <PriorityBreakdown score={z.priority_score} breakdown={z.priority_breakdown} />
+                  </div>
+                </div>
+              ))
+          )}
+        </Panel>
+
+        <Panel title="Replanning Alerts">
+          {moves.length === 0 ? (
+            <EmptyState title="No reallocation in the latest plan" hint="Inject an urgent report to generate a delta." />
+          ) : (
+            <AllocationDelta delta={data.delta} />
+          )}
+        </Panel>
+
+        <Panel title="Resource Status">
+          {resources.length === 0 ? (
+            <EmptyState title="No resources in inventory" />
+          ) : (
+            resources.slice(0, 10).map((r: any) => (
+              <div key={r.id} className="mb-2 flex justify-between text-sm">
+                <span className="text-white">{r.name}</span>
+                <span className="uppercase text-slate-400">{r.status}</span>
+              </div>
+            ))
+          )}
+        </Panel>
+
+        <Panel title="Active Coordination">
+          {pending.length === 0 ? (
+            <EmptyState title="No actions awaiting approval" />
+          ) : (
+            pending.slice(0, 8).map((t: any) => (
+              <div key={t.id} className="mb-2 text-sm">
+                <span className="font-medium text-violet-300">{t.agency_id}</span>
+                <span className="text-slate-300"> — {t.action}</span>
+              </div>
+            ))
+          )}
+        </Panel>
+      </div>
+
+      <Panel title="Live Activity">
+        {(data.audit || []).length === 0 ? (
+          <EmptyState title="No activity yet" hint="Load a scenario to start the pipeline." />
+        ) : (
+          (data.audit || []).slice(0, 12).map((e: any) => (
+            <div key={e.id} className="mb-2 flex gap-3 text-sm">
+              <div className="w-16 shrink-0 text-xs text-slate-500">{new Date(e.timestamp).toLocaleTimeString()}</div>
+              <div>
+                <span className="font-medium text-blue-300">{e.agent || e.actor}</span>
+                <span className="text-slate-300"> · {e.description}</span>
+              </div>
+            </div>
+          ))
+        )}
+      </Panel>
     </div>
   );
 }
 
-function StatCard({ title, value, color }: { title: string; value: number; color: string }) {
-  const colorClasses = {
-    red: 'bg-red-50 text-red-600 border-red-200',
-    orange: 'bg-orange-50 text-orange-600 border-orange-200',
-    green: 'bg-green-50 text-green-600 border-green-200',
-    blue: 'bg-blue-50 text-blue-600 border-blue-200',
-  };
-
+function Stat({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className={`rounded-lg border-2 p-4 ${colorClasses[color as keyof typeof colorClasses]}`}>
-      <div className="text-sm font-medium opacity-80">{title}</div>
-      <div className="text-3xl font-bold mt-2">{value}</div>
+    <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className="mt-1 text-2xl font-bold text-white">{value ?? 0}</div>
     </div>
+  );
+}
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-lg border border-slate-800 bg-slate-900 p-4">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">{title}</h2>
+      {children}
+    </section>
   );
 }

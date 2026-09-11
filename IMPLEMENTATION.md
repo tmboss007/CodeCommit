@@ -1,8 +1,28 @@
-# NEXUS-R Implementation Summary
+# CodeCommit Implementation Summary
 
 ## What Was Built
 
-A complete, functional MVP for PS20 - Agentic Disaster Relief & Emergency Resource Coordinator.
+Working MVP for emergency resource orchestration (internal PS20 mapping).
+
+### Core features
+
+1. **Pipeline**
+   - Situation Agent (heuristic default; LLM optional)
+   - Needs Assessment (deterministic decision service)
+   - Priority scoring (deterministic)
+   - Duplicate detection (heuristic; LLM optional)
+   - Coordination Agent (task generation)
+   - Replanning evaluator (threshold-based)
+
+2. **Optimization** — Google OR-Tools SCIP with greedy fallback — IMPLEMENTED
+
+3. **Human approval** — approve changes resource/allocation; reject does not deploy — IMPLEMENTED
+
+4. **Audit trail** — correlation IDs — IMPLEMENTED
+
+5. **Frontend** — CodeCommit command center, MapLibre, Scenario Simulator — IMPLEMENTED
+
+6. **External feeds** — IMD/GDACS/MOSDAC/routing SIMULATED
 
 ### ✅ Core Features Implemented
 

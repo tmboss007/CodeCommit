@@ -7,7 +7,8 @@ from app.schemas import AuditEvent as AuditEventSchema
 
 router = APIRouter(prefix="/api/audit", tags=["audit"])
 
-@router.get("/", response_model=List[AuditEventSchema])
+@router.get("", response_model=List[AuditEventSchema])
+@router.get("/", response_model=List[AuditEventSchema], include_in_schema=False)
 def list_audit_events(
     event_type: str = None,
     correlation_id: str = None,

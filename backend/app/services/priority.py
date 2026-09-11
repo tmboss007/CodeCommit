@@ -28,15 +28,14 @@ class PriorityCalculator:
         Returns: (priority_score, factor_breakdown)
         """
         # Severity score (already 0-10, normalize to 0-100)
-        severity_score = severity * 10
+        severity_score = min(severity * 10, 100)
 
-        # Affected population score
-        pop_ratio = affected_population / max(total_population, 1)
-        affected_pop_score = min(pop_ratio * 100, 100)
+        # Affected population: 2,500 affected maps to 100
+        affected_pop_score = min((affected_population / 2500.0) * 100, 100)
 
-        # Vulnerability score
+        # Vulnerability: 25% of affected maps to 100
         vuln_ratio = vulnerable_population / max(affected_population, 1)
-        vulnerability_score = vuln_ratio * 100
+        vulnerability_score = min((vuln_ratio / 0.25) * 100, 100)
 
         # Resource deficit score (0-1 input, scale to 0-100)
         deficit_score = resource_deficit_ratio * 100

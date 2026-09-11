@@ -1,39 +1,53 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from app.core.config import settings
+from app.core.database import engine, Base
 from app.api import incidents, zones, resources, plans, coordination, audit
+from app.api import simulation, ops
+from app.models import Zone  # noqa: F401 — register models
 
 app = FastAPI(
     title="NEXUS-R API",
     description="Agentic Disaster Resource Orchestration Platform",
-    version="1.0.0"
+    version="1.0.0",
+    redirect_slashes=False,
 )
 
-# CORS
 origins = settings.CORS_ORIGINS.split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=origins + ["http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Register routes
 app.include_router(incidents.router)
 app.include_router(zones.router)
 app.include_router(resources.router)
 app.include_router(plans.router)
 app.include_router(coordination.router)
 app.include_router(audit.router)
+app.include_router(simulation.router)
+app.include_router(ops.router)
+
+
+@app.on_event("startup")
+def startup():
+    Base.metadata.create_all(bind=engine)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT priority_breakdown FROM zones LIMIT 1"))
+    except Exception:
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+
 
 @app.get("/")
 def root():
-    return {
-        "name": "NEXUS-R API",
-        "version": "1.0.0",
-        "status": "operational"
-    }
+    return {"name": "NEXUS-R API", "version": "1.0.0", "status": "operational"}
+
 
 @app.get("/health")
 def health():
