@@ -2,10 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from app.core.config import settings
-from app.core.database import engine, Base
+from app.core.database import engine, Base, ensure_schema
 from app.api import incidents, zones, resources, plans, coordination, audit
 from app.api import simulation, ops
 from app.models import Zone  # noqa: F401 — register models
+from app.models import Plan  # noqa: F401
 
 app = FastAPI(
     title="NEXUS-R API",
@@ -35,10 +36,11 @@ app.include_router(ops.router)
 
 @app.on_event("startup")
 def startup():
-    Base.metadata.create_all(bind=engine)
+    ensure_schema()
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT priority_breakdown FROM zones LIMIT 1"))
+            conn.execute(text("SELECT last_plan_status FROM app_state LIMIT 1"))
     except Exception:
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)

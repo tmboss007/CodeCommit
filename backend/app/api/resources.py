@@ -12,6 +12,9 @@ router = APIRouter(prefix="/api/resources", tags=["resources"])
 
 class ResourcePatch(BaseModel):
     status: Optional[str] = None
+    current_zone_id: Optional[str] = None
+    eta_minutes: Optional[int] = None
+    reason: Optional[str] = None
 
 
 @router.get("", response_model=List[ResourceSchema])
@@ -29,12 +32,11 @@ def list_resources(status: str = None, type: str = None, agency_id: str = None, 
 
 @router.patch("/{resource_id}")
 def patch_resource(resource_id: str, payload: ResourcePatch, db: Session = Depends(get_db)):
-    resource = db.query(Resource).filter(Resource.id == resource_id).first()
-    if not resource:
-        raise HTTPException(status_code=404, detail="Resource not found")
-    if payload.status:
-        if payload.status == "unavailable":
-            return OrchestrationService(db).disable_resource(resource_id)
-        resource.status = payload.status
-        db.commit()
-    return {"id": resource.id, "status": resource.status}
+    data = payload.dict(exclude_unset=True)
+    reason = data.pop("reason", None)
+    if not data:
+        raise HTTPException(status_code=400, detail={"error": "empty_patch", "details": ["No resource fields to update"]})
+    result = OrchestrationService(db).update_resource(resource_id, data, actor="operator", reason=reason)
+    if result.get("error"):
+        raise HTTPException(status_code=result.get("status_code") or 400, detail=result)
+    return result

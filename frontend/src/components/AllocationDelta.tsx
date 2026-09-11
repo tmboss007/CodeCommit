@@ -1,58 +1,66 @@
 'use client';
 
-export function AllocationDelta({ delta }: { delta: any }) {
+import type { ReactNode } from 'react';
+import { formatScore } from '../lib/ops';
+
+export function AllocationDelta({ delta, explanation }: { delta: any; explanation?: string }) {
   if (!delta) {
-    return <div className="text-sm text-slate-400">No allocation delta yet. Load a scenario, then inject an urgent report.</div>;
+    return <p className="text-sm text-slate-400">No allocation delta yet. Load a scenario, then inject an urgent report.</p>;
   }
 
-  const before = delta.before_by_zone || {};
-  const after = delta.after_by_zone || {};
-  const zones = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
+  const moves = delta.moves || [];
+  const changes = (delta.priority_changes || []).filter((p: any) => {
+    if (p?.before == null || p?.after == null) return false;
+    return Math.abs(Number(p.after) - Number(p.before)) >= 0.01;
+  });
 
   return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
-        <div>
-          <h3 className="mb-2 text-sm font-semibold text-slate-300">BEFORE</h3>
-          {zones.map((z) => (
-            <div key={`b-${z}`} className="mb-1 text-sm">
-              <span className="font-medium text-white">{z}:</span>{' '}
-              {formatCounts(before[z])}
+        <Column title="Before">
+          {moves.length === 0 && <p className="text-sm text-slate-500">No prior assignment listed</p>}
+          {moves.map((m: any, i: number) => (
+            <div key={`b-${i}`} className="text-sm text-slate-300">
+              <span className="font-medium text-white">{m.resource_id || m.name}</span>
+              {' → '}
+              {m.from_zone || 'unassigned'}
             </div>
           ))}
-        </div>
-        <div>
-          <h3 className="mb-2 text-sm font-semibold text-slate-300">AFTER</h3>
-          {zones.map((z) => (
-            <div key={`a-${z}`} className="mb-1 text-sm">
-              <span className="font-medium text-white">{z}:</span>{' '}
-              {formatCounts(after[z])}
+        </Column>
+        <Column title="After">
+          {moves.length === 0 && <p className="text-sm text-slate-500">No new assignment listed</p>}
+          {moves.map((m: any, i: number) => (
+            <div key={`a-${i}`} className="text-sm text-emerald-300">
+              <span className="font-medium text-white">{m.resource_id || m.name}</span>
+              {' → '}
+              {m.to_zone}
             </div>
           ))}
-        </div>
+        </Column>
       </div>
-      {delta.moves?.length > 0 && (
-        <div>
-          <h3 className="mb-2 text-sm font-semibold text-amber-300">CHANGE</h3>
-          {delta.moves.map((m: any, i: number) => (
-            <div key={i} className="rounded border border-amber-700/50 bg-amber-950/40 p-2 text-sm">
-              <div className="font-medium text-amber-100">{m.name || m.resource_id}</div>
-              <div className="text-slate-300">
-                {m.from_zone} → {m.to_zone}
-              </div>
-              {m.reason && <div className="mt-1 text-xs text-slate-400">{m.reason}</div>}
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="text-xs text-slate-500">{delta.summary}</div>
+      <div className="rounded-md border border-slate-800 bg-slate-950/60 p-3 text-sm">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Why</div>
+        {changes.length === 0 ? (
+          <p className="mt-1 text-slate-300">Resource movements respond to unmet demand and current zone priority. No additional priority score change was recorded for this replan.</p>
+        ) : (
+          changes.map((p: any) => (
+            <p key={p.zone_id} className="mt-1 text-slate-200">
+              {p.zone_id} priority increased: {formatScore(p.before, 2)} → {formatScore(p.after, 2)}
+            </p>
+          ))
+        )}
+        <p className="mt-2 text-slate-400">Expected effect: higher critical-demand coverage where resources are moved.</p>
+        {(explanation || delta.summary) && <p className="mt-2 text-xs text-slate-500">{explanation || delta.summary}</p>}
+      </div>
     </div>
   );
 }
 
-function formatCounts(counts?: Record<string, number>) {
-  if (!counts || !Object.keys(counts).length) return <span className="text-slate-500">none</span>;
-  return Object.entries(counts)
-    .map(([k, v]) => `${v} ${k.replace('_', ' ')}`)
-    .join(', ');
+function Column({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{title}</h3>
+      {children}
+    </div>
+  );
 }

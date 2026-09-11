@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from app.models import (
     Zone, Incident, Need, Resource, Allocation, CoordinationTask, AuditEvent,
-    AppState, ReplanningEvent, Agency,
+    AppState, ReplanningEvent, Agency, Plan,
 )
 from app.agents.core import SituationAgent, DuplicateDetectionAgent, CoordinationAgent
 from app.agents.replanning import ReplanningAgent
@@ -183,21 +183,38 @@ class OrchestrationService:
                 correlation_id=correlation_id,
                 new_state=details,
             )
-            result["plan"] = self.generate_allocation_plan(correlation_id=correlation_id, trigger=reason)
+            result["plan"] = self.generate_allocation_plan(
+                correlation_id=correlation_id,
+                trigger=reason,
+                prior_snapshot=old_snapshot,
+            )
 
         return result
 
-    def generate_allocation_plan(self, correlation_id: Optional[str] = None, trigger: str = "manual") -> Dict:
+    def generate_allocation_plan(
+        self,
+        correlation_id: Optional[str] = None,
+        trigger: str = "manual",
+        prior_snapshot: Optional[Dict] = None,
+    ) -> Dict:
         if not correlation_id:
             correlation_id = f"corr_{uuid.uuid4().hex[:8]}"
 
         plan_id = f"plan_{uuid.uuid4().hex[:8]}"
         app_state = self._get_state()
+        previous_plan_id = app_state.active_plan_id
+        prior_snapshot = prior_snapshot or self._current_snapshot()
         old_allocations = self._allocation_dicts()
 
         pending = self.db.query(Allocation).filter(Allocation.status == "pending").all()
         for alloc in pending:
             alloc.status = "superseded"
+            stale_tasks = self.db.query(CoordinationTask).filter(
+                CoordinationTask.allocation_id == alloc.id,
+                CoordinationTask.status == "pending",
+            ).all()
+            for task in stale_tasks:
+                task.status = "superseded"
 
         self._log_event(
             "ALLOCATION_CREATED",
@@ -264,6 +281,7 @@ class OrchestrationService:
                 id=f"task_{uuid.uuid4().hex[:8]}",
                 agency_id=task["agency_id"],
                 allocation_id=task.get("allocation_id"),
+                plan_id=plan_id,
                 action=task["action"],
                 status="pending",
             )
@@ -274,18 +292,36 @@ class OrchestrationService:
         delta["before_by_zone"] = self._counts_by_zone(old_allocations)
         delta["after_by_zone"] = self._counts_by_zone(allocations)
         delta["moves"] = self._moves(old_allocations, allocations, resources_map)
+        old_zone_map = {z["id"]: z for z in prior_snapshot.get("zones", [])}
+        delta["priority_changes"] = []
+        for z in zones:
+            old_p = old_zone_map.get(z.id, {}).get("priority_score")
+            if old_p is not None and abs((z.priority_score or 0) - old_p) >= 0.01:
+                delta["priority_changes"].append({
+                    "zone_id": z.id,
+                    "before": old_p,
+                    "after": z.priority_score,
+                })
 
         app_state.last_plan_id = plan_id
+        app_state.last_plan_status = "pending"
+        app_state.last_plan_trigger = trigger
         app_state.last_snapshot = self._current_snapshot()
         app_state.last_delta = delta
         app_state.last_unmet = unmet_demands
         app_state.last_explanation = explanation
         app_state.updated_at = datetime.utcnow()
 
+        self.db.add(Plan(
+            id=plan_id,
+            status="pending_approval",
+            trigger=trigger,
+            previous_plan_id=previous_plan_id,
+        ))
         self.db.add(ReplanningEvent(
             id=f"replan_{uuid.uuid4().hex[:8]}",
             trigger=trigger,
-            old_plan_id=None,
+            old_plan_id=previous_plan_id,
             new_plan_id=plan_id,
             changed_zones=list({a["zone_id"] for a in allocations}),
             changed_resources=list({a["resource_id"] for a in allocations}),
@@ -313,6 +349,7 @@ class OrchestrationService:
             "explanation": explanation,
             "delta": delta,
             "trigger": trigger,
+            "previous_plan_id": previous_plan_id,
             "timestamp": datetime.utcnow().isoformat(),
             "correlation_id": correlation_id,
         }
@@ -368,6 +405,342 @@ class OrchestrationService:
         )
         self.db.commit()
         return {"status": "rejected", "task_id": task_id}
+
+    def revise_plan_card(self, plan_id: Optional[str] = None) -> Optional[Dict]:
+        state = self._get_state()
+        plan_id = plan_id or state.last_plan_id
+        if not plan_id:
+            return None
+        allocations = self.db.query(Allocation).filter(Allocation.plan_id == plan_id).all()
+        pending_allocs = [a for a in allocations if a.status == "pending"]
+        if state.last_plan_status != "pending" or not pending_allocs:
+            return {
+                "plan_id": plan_id,
+                "status": state.last_plan_status or "none",
+                "pending": False,
+            }
+        resources = {r.id: r for r in self.db.query(Resource).all()}
+        tasks = []
+        for alloc in pending_allocs:
+            tasks.extend(self.db.query(CoordinationTask).filter(CoordinationTask.allocation_id == alloc.id).all())
+        agencies = sorted({t.agency_id for t in tasks})
+        affected_zones = sorted({a.zone_id for a in pending_allocs})
+        delta = state.last_delta or {}
+        moves = delta.get("moves") or []
+        priority_changes = []
+        for change in delta.get("priority_changes") or []:
+            before = change.get("before")
+            after = change.get("after")
+            if before is None or after is None:
+                continue
+            if abs(float(after) - float(before)) >= 0.01:
+                priority_changes.append(change)
+        trigger = state.last_plan_trigger or "state_change"
+        trigger_label = "Urgent Incident / State Change"
+        if trigger == "load_demo":
+            trigger_label = "Initial scenario"
+        elif trigger == "manual_replan":
+            trigger_label = "Manual replan"
+        before_lines = []
+        after_lines = []
+        for alloc in pending_allocs:
+            res = resources.get(alloc.resource_id)
+            name = res.name if res else alloc.resource_id
+            if alloc.from_zone_id:
+                before_lines.append(f"{alloc.from_zone_id} → {name}")
+            after_lines.append(f"{alloc.zone_id} → {name}")
+        for move in moves:
+            if move.get("from_zone") and move.get("name"):
+                line = f"{move['from_zone']} → {move['name']}"
+                if line not in before_lines:
+                    before_lines.append(line)
+                after_lines.append(f"{move.get('to_zone')} → {move.get('name')}")
+        return {
+            "plan_id": plan_id,
+            "status": "pending",
+            "pending": True,
+            "trigger": trigger,
+            "trigger_label": trigger_label,
+            "affected_zones": affected_zones,
+            "resources_to_move": len(moves) or len(pending_allocs),
+            "agencies_affected": len(agencies),
+            "agencies": agencies,
+            "priority_changes": priority_changes,
+            "estimated_impact": state.last_explanation or delta.get("summary"),
+            "pending_task_count": len(tasks),
+            "pending_allocation_count": len(pending_allocs),
+            "delta": delta,
+            "review": {
+                "before": before_lines[:40],
+                "after": after_lines[:40],
+                "total_movements": len(moves) or len(pending_allocs),
+                "affected_agencies": len(agencies),
+                "priority_changes": priority_changes,
+            },
+        }
+
+    def approve_plan(self, plan_id: str, actor: str = "operator") -> Dict:
+        state = self._get_state()
+        if not plan_id:
+            return {"error": "missing_plan", "status_code": 404}
+        if state.last_plan_id == plan_id and state.last_plan_status == "approved":
+            return {"error": "already_approved", "status_code": 409}
+
+        allocations = self.db.query(Allocation).filter(
+            Allocation.plan_id == plan_id,
+            Allocation.status == "pending",
+        ).all()
+        if not allocations:
+            already = self.db.query(Allocation).filter(Allocation.plan_id == plan_id, Allocation.status == "approved").count()
+            if already:
+                return {"error": "already_approved", "status_code": 409}
+            return {"error": "plan_not_found", "status_code": 404}
+
+        errors = self._validate_plan_allocations(allocations)
+        if errors:
+            return {"error": "validation_failed", "details": errors, "status_code": 400}
+
+        previous_active = state.active_plan_id
+        now = datetime.utcnow()
+        resource_ids = []
+        task_ids = []
+        try:
+            for alloc in allocations:
+                resource = self.db.query(Resource).filter(Resource.id == alloc.resource_id).first()
+                if not resource:
+                    raise RuntimeError("resource_missing_during_apply")
+                prior_allocs = self.db.query(Allocation).filter(
+                    Allocation.resource_id == alloc.resource_id,
+                    Allocation.status == "approved",
+                    Allocation.id != alloc.id,
+                ).all()
+                for old in prior_allocs:
+                    old.status = "superseded"
+                alloc.status = "approved"
+                alloc.approved_at = now
+                alloc.approved_by = actor
+                resource.status = "en_route" if resource.type in EXCLUSIVE_TYPES else "reserved"
+                resource.current_zone_id = alloc.zone_id
+                resource.eta_minutes = alloc.eta_minutes
+                resource_ids.append(resource.id)
+                tasks = self.db.query(CoordinationTask).filter(CoordinationTask.allocation_id == alloc.id).all()
+                for task in tasks:
+                    task.status = "approved"
+                    task.approved_at = now
+                    task_ids.append(task.id)
+                    self._log_event(
+                        "APPROVAL_GRANTED",
+                        f"Human Approval granted for {task.id} as part of plan {plan_id}",
+                        actor=actor,
+                        agent="Human Approval",
+                        new_state={"task_id": task.id, "allocation_id": alloc.id, "plan_id": plan_id},
+                        correlation_id=plan_id,
+                        commit=False,
+                    )
+            if previous_active and previous_active != plan_id:
+                self._supersede_plan(previous_active)
+            plan_row = self.db.query(Plan).filter(Plan.id == plan_id).first()
+            if plan_row:
+                plan_row.status = "active"
+                plan_row.approved_at = now
+            state.last_plan_status = "approved"
+            state.last_plan_id = plan_id
+            state.active_plan_id = plan_id
+            self._log_event(
+                "PLAN_APPROVED",
+                f"Revised response plan {plan_id} approved ({len(task_ids)} tasks, {len(allocations)} allocations)",
+                actor=actor,
+                agent="Human Approval",
+                previous_state={"active_plan_id": previous_active},
+                new_state={"plan_id": plan_id, "tasks": task_ids, "resources": resource_ids},
+                correlation_id=plan_id,
+                commit=False,
+            )
+            self.db.commit()
+        except Exception as exc:
+            self.db.rollback()
+            return {"error": "apply_failed", "details": [str(exc)], "status_code": 500}
+
+        return {
+            "status": "approved",
+            "plan_id": plan_id,
+            "active_plan_id": plan_id,
+            "previous_plan_id": previous_active,
+            "tasks_approved": len(task_ids),
+            "allocations_approved": len(allocations),
+            "resources_updated": len(set(resource_ids)),
+        }
+
+    def reject_plan(self, plan_id: str, actor: str = "operator") -> Dict:
+        state = self._get_state()
+        allocations = self.db.query(Allocation).filter(
+            Allocation.plan_id == plan_id,
+            Allocation.status == "pending",
+        ).all()
+        if not allocations:
+            if state.last_plan_id == plan_id and state.last_plan_status == "rejected":
+                return {"error": "already_rejected", "status_code": 409}
+            return {"error": "plan_not_found", "status_code": 404}
+
+        previous_active = state.active_plan_id
+        task_ids = []
+        for alloc in allocations:
+            alloc.status = "rejected"
+            tasks = self.db.query(CoordinationTask).filter(CoordinationTask.allocation_id == alloc.id).all()
+            for task in tasks:
+                task.status = "rejected"
+                task_ids.append(task.id)
+        plan_row = self.db.query(Plan).filter(Plan.id == plan_id).first()
+        if plan_row:
+            plan_row.status = "rejected"
+            plan_row.rejected_at = datetime.utcnow()
+        state.last_plan_status = "rejected"
+        self._log_event(
+            "PLAN_REJECTED",
+            f"Revised response plan {plan_id} rejected. Previous active plan preserved.",
+            actor=actor,
+            agent="Human Approval",
+            previous_state={"active_plan_id": previous_active},
+            new_state={"plan_id": plan_id, "tasks_rejected": task_ids},
+            correlation_id=plan_id,
+            commit=False,
+        )
+        self.db.commit()
+        return {
+            "status": "rejected",
+            "plan_id": plan_id,
+            "tasks_rejected": len(task_ids),
+            "active_plan_id": previous_active,
+        }
+
+    def _validate_plan_allocations(self, allocations) -> list:
+        errors = []
+        seen_exclusive = {}
+        for alloc in allocations:
+            resource = self.db.query(Resource).filter(Resource.id == alloc.resource_id).first()
+            if not resource:
+                errors.append(f"Resource {alloc.resource_id} no longer exists")
+                continue
+            if resource.status in ("unavailable", "maintenance"):
+                errors.append(f"Resource {resource.id} is {resource.status} and cannot be allocated")
+            if alloc.quantity and resource.quantity is not None and alloc.quantity > resource.quantity + 0.001:
+                errors.append(f"Resource {resource.id} over-allocated ({alloc.quantity} > {resource.quantity})")
+            zone = self.db.query(Zone).filter(Zone.id == alloc.zone_id).first()
+            if not zone:
+                errors.append(f"Zone {alloc.zone_id} is invalid")
+            if resource.type in EXCLUSIVE_TYPES:
+                if resource.id in seen_exclusive and seen_exclusive[resource.id] != alloc.zone_id:
+                    errors.append(f"Exclusive resource {resource.id} assigned to conflicting zones")
+                seen_exclusive[resource.id] = alloc.zone_id
+        return errors
+
+    def _supersede_plan(self, plan_id: str):
+        plan_row = self.db.query(Plan).filter(Plan.id == plan_id).first()
+        if plan_row and plan_row.status == "active":
+            plan_row.status = "superseded"
+        allocs = self.db.query(Allocation).filter(
+            Allocation.plan_id == plan_id,
+            Allocation.status == "approved",
+        ).all()
+        for alloc in allocs:
+            alloc.status = "superseded"
+            tasks = self.db.query(CoordinationTask).filter(CoordinationTask.allocation_id == alloc.id).all()
+            for task in tasks:
+                if task.status in ("approved", "in_progress", "pending"):
+                    task.status = "superseded"
+
+    def list_plans(self) -> list:
+        rows = self.db.query(Plan).order_by(Plan.created_at.desc()).all()
+        return [
+            {
+                "id": p.id,
+                "status": p.status,
+                "trigger": p.trigger,
+                "previous_plan_id": p.previous_plan_id,
+                "created_at": p.created_at,
+                "approved_at": p.approved_at,
+                "rejected_at": p.rejected_at,
+            }
+            for p in rows
+        ]
+
+    def active_plan_tasks(self):
+        state = self._get_state()
+        if not state.active_plan_id:
+            return []
+        return self.db.query(CoordinationTask).filter(
+            CoordinationTask.plan_id == state.active_plan_id,
+            CoordinationTask.status.in_(["approved", "in_progress"]),
+        ).all()
+
+    ALLOWED_RESOURCE_STATUSES = {"available", "reserved", "en_route", "deployed", "unavailable", "maintenance"}
+
+    def update_resource(
+        self,
+        resource_id: str,
+        fields: Dict,
+        actor: str = "operator",
+        reason: Optional[str] = None,
+    ) -> Dict:
+        resource = self.db.query(Resource).filter(Resource.id == resource_id).first()
+        if not resource:
+            return {"error": "not_found", "status_code": 404}
+        previous = {
+            "status": resource.status,
+            "current_zone_id": resource.current_zone_id,
+            "eta_minutes": resource.eta_minutes,
+        }
+        if "status" in fields and fields["status"] is not None:
+            status = str(fields["status"]).strip().lower()
+            if status not in self.ALLOWED_RESOURCE_STATUSES:
+                return {"error": "invalid_status", "status_code": 400, "details": [f"Status {fields['status']} is not allowed"]}
+            resource.status = status
+        if "current_zone_id" in fields:
+            zone_id = fields["current_zone_id"]
+            if zone_id in (None, "", "none", "unassigned"):
+                resource.current_zone_id = None
+            else:
+                zone = self.db.query(Zone).filter(Zone.id == zone_id).first()
+                if not zone:
+                    return {"error": "invalid_zone", "status_code": 400, "details": [f"Zone {zone_id} is invalid"]}
+                resource.current_zone_id = zone_id
+        if "eta_minutes" in fields:
+            eta = fields["eta_minutes"]
+            if eta is None or eta == "":
+                resource.eta_minutes = None
+            else:
+                try:
+                    resource.eta_minutes = int(eta)
+                except (TypeError, ValueError):
+                    return {"error": "invalid_eta", "status_code": 400, "details": ["ETA must be an integer number of minutes"]}
+                if resource.eta_minutes < 0:
+                    return {"error": "invalid_eta", "status_code": 400, "details": ["ETA cannot be negative"]}
+        new_state = {
+            "status": resource.status,
+            "current_zone_id": resource.current_zone_id,
+            "eta_minutes": resource.eta_minutes,
+        }
+        corr = f"corr_manual_{uuid.uuid4().hex[:8]}"
+        note = reason or "Manual inventory correction"
+        self._log_event(
+            "RESOURCE_STATE_CHANGED",
+            f"Resource {resource.agency_id}-{resource.id} {previous['status']}/{previous['current_zone_id'] or 'unassigned'} → {new_state['status']}/{new_state['current_zone_id'] or 'unassigned'}",
+            actor=actor,
+            agent="Operator",
+            previous_state=previous,
+            new_state=new_state,
+            correlation_id=corr,
+            reason=note,
+        )
+        # _log_event already commits by default
+        return {
+            "id": resource.id,
+            "status": resource.status,
+            "current_zone_id": resource.current_zone_id,
+            "eta_minutes": resource.eta_minutes,
+            "correlation_id": corr,
+            "reason": note,
+        }
 
     def reset_world(self):
         seed_base_entities(self.db)
@@ -582,6 +955,8 @@ class OrchestrationService:
         previous_state: Optional[Dict] = None,
         new_state: Optional[Dict] = None,
         correlation_id: Optional[str] = None,
+        commit: bool = True,
+        reason: Optional[str] = None,
     ):
         self.db.add(AuditEvent(
             id=f"evt_{uuid.uuid4().hex[:8]}",
@@ -591,9 +966,11 @@ class OrchestrationService:
             agent=agent,
             previous_state=previous_state,
             new_state=new_state,
-            reason=description,
+            reason=reason or description,
             correlation_id=correlation_id,
         ))
+        if not commit:
+            return
         try:
             self.db.commit()
         except Exception:

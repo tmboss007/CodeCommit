@@ -3,7 +3,7 @@ from ortools.linear_solver import pywraplp
 import uuid
 
 EXCLUSIVE_TYPES = {"rescue_team", "medical_team", "fire_team"}
-ALLOCATABLE_STATUSES = {"available"}
+ALLOCATABLE_STATUSES = {"available", "reserved", "en_route", "deployed"}
 
 
 class ResourceOptimizer:

@@ -27,7 +27,7 @@ dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
+Add-Content .gitignore "frontend/tsconfig.tsbuildinfo"
 # IDEs
 .vscode/
 .idea/

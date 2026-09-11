@@ -2,17 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { snapshotAPI } from '../../lib/api';
-import { EmptyState, ErrorBanner, kindForActor } from '../../components/Status';
+import { PIPELINE, kindForActor, pipelineStatus } from '../../lib/ops';
+import { EmptyState, ErrorBanner, PageHeader } from '../../components/ui/chrome';
+import { Badge } from '../../components/ui/badge';
+import { Card, CardBody } from '../../components/ui/card';
 
-const PIPELINE = [
-  { match: 'Situation', label: 'Situation Agent', kind: 'Agent' },
-  { match: 'Needs', label: 'Needs Assessment', kind: 'Decision Service' },
-  { match: 'Priority', label: 'Priority', kind: 'Decision Service' },
-  { match: 'Duplicate', label: 'Duplicate Detection', kind: 'Agent' },
-  { match: 'Optimization', label: 'Optimization Engine', kind: 'Decision Service' },
-  { match: 'Coordination', label: 'Coordination Agent', kind: 'Agent' },
-  { match: 'Replanning', label: 'Replanning', kind: 'Decision Service' },
-];
+const statusTone = {
+  RUNNING: 'warning',
+  COMPLETED: 'success',
+  WAITING: 'neutral',
+  FAILED: 'critical',
+} as const;
 
 export default function AgentsPage() {
   const [events, setEvents] = useState<any[]>([]);
@@ -30,16 +30,25 @@ export default function AgentsPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-2xl font-bold text-white">Agents</h1>
-      <p className="mb-4 text-sm text-slate-400">
-        Events are stored by the backend. Interpretation components are agents; scoring, needs, and allocation are decision services.
-      </p>
-      <div className="mb-4 flex flex-wrap gap-2 text-xs">
-        {PIPELINE.map((p) => (
-          <span key={p.label} className="rounded border border-slate-700 px-2 py-1 text-slate-300">
-            {p.label} · {p.kind}
-          </span>
-        ))}
+      <PageHeader
+        title="Agents"
+        description="Agents interpret reports and coordinate agencies. Decision services score needs, priority, and allocations. Status is derived from stored events — not simulated typing."
+      />
+      <div className="mb-5 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {PIPELINE.map((p) => {
+          const status = pipelineStatus(events, p.match);
+          return (
+            <Card key={p.label}>
+              <CardBody>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">{p.kind}</div>
+                <div className="mt-1 font-medium text-white">{p.label}</div>
+                <div className="mt-2">
+                  <Badge tone={statusTone[status]}>{status}</Badge>
+                </div>
+              </CardBody>
+            </Card>
+          );
+        })}
       </div>
       {error && <ErrorBanner message={error} />}
       {events.length === 0 && !error ? (
@@ -47,13 +56,15 @@ export default function AgentsPage() {
       ) : (
         <div className="space-y-2">
           {events.map((e) => (
-            <div key={e.id} className="grid grid-cols-[80px_1fr] gap-3 rounded border border-slate-800 bg-slate-900 p-3 text-sm">
+            <div key={e.id} className="grid grid-cols-[80px_1fr] gap-3 rounded-lg border border-slate-800 bg-slate-900 p-3 text-sm">
               <div className="text-slate-500">{new Date(e.timestamp).toLocaleTimeString()}</div>
               <div>
-                <div className="font-medium text-blue-300">
-                  {e.agent || e.actor} · {kindForActor(e.agent)} · {e.event_type}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-sky-300">{e.agent || e.actor}</span>
+                  <Badge>{kindForActor(e.agent)}</Badge>
+                  <Badge tone="info">{e.event_type}</Badge>
                 </div>
-                <div className="text-slate-200">{e.description}</div>
+                <div className="mt-1 text-slate-200">{e.description}</div>
                 {e.correlation_id && <div className="text-xs text-slate-500">corr {e.correlation_id}</div>}
               </div>
             </div>

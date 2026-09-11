@@ -1,15 +1,20 @@
+import { formatScore, severityTier } from '../lib/ops';
+import { Badge } from './ui/badge';
+
 export function PriorityBreakdown({ score, breakdown }: { score: number; breakdown?: Record<string, number> | null }) {
-  const color = score >= 80 ? 'text-red-400' : score >= 60 ? 'text-orange-300' : 'text-sky-300';
+  const tier = severityTier(score);
   return (
-    <div>
-      <div className={`text-2xl font-bold ${color}`}>{Number(score || 0).toFixed(0)}/100</div>
+    <div className="text-right">
+      <div className="flex items-center justify-end gap-2">
+        <Badge tone={tier.tone}>{tier.label}</Badge>
+        <span className="text-xl font-semibold tabular-nums text-white">{formatScore(score)} / 100</span>
+      </div>
       {breakdown && (
-        <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-slate-400">
+        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
           <span>Severity {breakdown.severity}</span>
           <span>Population {breakdown.affected_population}</span>
           <span>Vulnerability {breakdown.vulnerability}</span>
           <span>Deficit {breakdown.resource_deficit}</span>
-          <span>Time {breakdown.time_criticality}</span>
         </div>
       )}
     </div>

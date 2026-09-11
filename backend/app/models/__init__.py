@@ -127,6 +127,7 @@ class CoordinationTask(Base):
     id = Column(String, primary_key=True)
     agency_id = Column(String, ForeignKey("agencies.id"), nullable=False)
     allocation_id = Column(String, ForeignKey("allocations.id"))
+    plan_id = Column(String)
     action = Column(Text, nullable=False)
     status = Column(String, default="pending")
     assigned_at = Column(DateTime, default=datetime.utcnow)
@@ -164,11 +165,26 @@ class ReplanningEvent(Base):
     correlation_id = Column(String)
 
 
+class Plan(Base):
+    __tablename__ = "plans"
+
+    id = Column(String, primary_key=True)
+    status = Column(String, nullable=False, default="pending_approval")
+    trigger = Column(String)
+    previous_plan_id = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    approved_at = Column(DateTime)
+    rejected_at = Column(DateTime)
+
+
 class AppState(Base):
     __tablename__ = "app_state"
 
     id = Column(String, primary_key=True, default="singleton")
     last_plan_id = Column(String)
+    last_plan_status = Column(String, default="none")
+    last_plan_trigger = Column(String)
+    active_plan_id = Column(String)
     last_snapshot = Column(JSON)
     last_delta = Column(JSON)
     last_unmet = Column(JSON)

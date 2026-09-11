@@ -6,6 +6,7 @@ from app.models import (
 )
 from app.providers import weather_provider, disaster_provider, satellite_provider
 from app.services.routing import SimulationRoutingProvider
+from app.services.orchestration import OrchestrationService
 
 router = APIRouter(prefix="/api", tags=["ops"])
 
@@ -90,6 +91,10 @@ def snapshot(db: Session = Depends(get_db)):
     return {
         "data_mode": (state.data_mode if state else "SIMULATION"),
         "last_plan_id": state.last_plan_id if state else None,
+        "last_plan_status": state.last_plan_status if state else None,
+        "active_plan_id": state.active_plan_id if state else None,
+        "plans": OrchestrationService(db).list_plans() if state else [],
+        "revised_plan": OrchestrationService(db).revise_plan_card() if state else None,
         "delta": state.last_delta if state else None,
         "unmet_demands": state.last_unmet if state else [],
         "explanation": state.last_explanation if state else None,
@@ -141,7 +146,8 @@ def snapshot(db: Session = Depends(get_db)):
         "tasks": [
             {
                 "id": t.id, "agency_id": t.agency_id, "allocation_id": t.allocation_id,
-                "action": t.action, "status": t.status, "assigned_at": t.assigned_at, "approved_at": t.approved_at,
+                "plan_id": t.plan_id, "action": t.action, "status": t.status,
+                "assigned_at": t.assigned_at, "approved_at": t.approved_at,
             }
             for t in tasks
         ],

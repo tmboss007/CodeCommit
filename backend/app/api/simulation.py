@@ -1,10 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.core.database import get_db, engine, SessionLocal, Base
+from app.core.database import get_db, engine, SessionLocal, Base, ensure_schema
 from app.services.orchestration import OrchestrationService
-from app.models import Resource, AppState
+from app.models import Resource
 
 router = APIRouter(prefix="/api/simulation", tags=["simulation"])
+
+
+def _recreate():
+    ensure_schema()
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    ensure_schema()
+
 
 
 def _fresh_service():
@@ -17,8 +25,7 @@ def _fresh_service():
 def reset():
     db = None
     try:
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
+        _recreate()
         db = SessionLocal()
         return OrchestrationService(db).reset_world()
     finally:
@@ -30,8 +37,7 @@ def reset():
 def load_demo():
     db = None
     try:
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
+        _recreate()
         db = SessionLocal()
         return OrchestrationService(db).load_demo()
     finally:

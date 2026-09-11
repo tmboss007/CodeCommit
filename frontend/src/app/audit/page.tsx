@@ -1,8 +1,10 @@
 'use client';
 
-import { Fragment, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { snapshotAPI } from '../../lib/api';
-import { EmptyState, ErrorBanner } from '../../components/Status';
+import { kindForActor } from '../../lib/ops';
+import { EmptyState, ErrorBanner, PageHeader } from '../../components/ui/chrome';
+import { Badge } from '../../components/ui/badge';
 
 export default function AuditPage() {
   const [events, setEvents] = useState<any[]>([]);
@@ -17,48 +19,43 @@ export default function AuditPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-2xl font-bold text-white">Audit</h1>
-      <p className="mb-4 text-sm text-slate-400">Immutable history of incident analysis, allocation, approval, and replanning.</p>
+      <PageHeader title="Audit" description="Operational timeline of analysis, allocation, approval, and replanning. Expand an event for previous and new state." />
       {error && <ErrorBanner message={error} />}
       {events.length === 0 && !error ? (
         <EmptyState title="Audit log is empty" hint="Operational actions will appear here." />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-800">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-slate-900 text-slate-400">
-              <tr>
-                <th className="p-2">Time</th>
-                <th className="p-2">Type</th>
-                <th className="p-2">Actor</th>
-                <th className="p-2">Service</th>
-                <th className="p-2">Description</th>
-                <th className="p-2">Corr</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.map((e) => (
-                <Fragment key={e.id}>
-                  <tr className="cursor-pointer border-t border-slate-800" onClick={() => setOpen(open === e.id ? null : e.id)}>
-                    <td className="p-2 text-slate-400">{new Date(e.timestamp).toLocaleString()}</td>
-                    <td className="p-2">{e.event_type}</td>
-                    <td className="p-2">{e.actor}</td>
-                    <td className="p-2">{e.agent || '—'}</td>
-                    <td className="p-2 text-slate-200">{e.description}</td>
-                    <td className="p-2 text-xs text-slate-500">{e.correlation_id}</td>
-                  </tr>
-                  {open === e.id && (
-                    <tr className="bg-slate-950/50">
-                      <td colSpan={6} className="p-3 text-xs text-slate-400">
-                        <div>Reason: {e.reason || e.description}</div>
-                        <pre className="mt-2 overflow-auto">{JSON.stringify({ previous_state: e.previous_state, new_state: e.new_state }, null, 2)}</pre>
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ol className="relative space-y-3 border-l border-slate-800 pl-5">
+          {events.map((e) => {
+            const expanded = open === e.id;
+            return (
+              <li key={e.id}>
+                <span aria-hidden className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border border-slate-500 bg-slate-900" />
+                <button
+                  type="button"
+                  aria-expanded={expanded}
+                  onClick={() => setOpen(expanded ? null : e.id)}
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900 p-3 text-left hover:border-slate-600"
+                >
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                    <span>{e.timestamp ? new Date(e.timestamp).toLocaleString() : '—'}</span>
+                    <Badge tone="info">{e.event_type}</Badge>
+                    <Badge>{kindForActor(e.agent)}</Badge>
+                    <span>{e.agent || e.actor}</span>
+                    {e.correlation_id && <span>corr {e.correlation_id}</span>}
+                  </div>
+                  <p className="mt-1 text-sm text-slate-100">{e.description}</p>
+                  <p className="mt-1 text-xs text-slate-500">Reason: {e.reason || e.description}</p>
+                </button>
+                {expanded && (
+                  <div className="mt-2 grid gap-3 rounded-md border border-slate-800 bg-slate-950 p-3 text-xs text-slate-300 md:grid-cols-2">
+                    <pre className="overflow-auto whitespace-pre-wrap">Previous state{'\n'}{JSON.stringify(e.previous_state ?? null, null, 2)}</pre>
+                    <pre className="overflow-auto whitespace-pre-wrap">New state{'\n'}{JSON.stringify(e.new_state ?? null, null, 2)}</pre>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ol>
       )}
     </div>
   );

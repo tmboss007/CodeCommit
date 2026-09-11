@@ -27,12 +27,16 @@ export const incidentsAPI = {
 export const resourcesAPI = {
   list: (params?: { status?: string; type?: string; agency_id?: string }) =>
     api.get('/api/resources', { params }),
+  patch: (id: string, data: { status?: string; current_zone_id?: string | null; eta_minutes?: number | null; reason?: string }) =>
+    api.patch(`/api/resources/${id}`, data),
 };
 
 export const plansAPI = {
   generate: (data?: { trigger?: string }) => api.post('/api/plans/generate', data || {}),
   replan: (data?: { trigger?: string }) => api.post('/api/plans/replan', data || { trigger: 'manual_replan' }),
   latest: () => api.get('/api/plans/latest'),
+  approve: (planId: string) => api.post(`/api/plans/${planId}/approve`),
+  reject: (planId: string) => api.post(`/api/plans/${planId}/reject`),
 };
 
 export const coordinationAPI = {
