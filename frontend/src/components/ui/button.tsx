@@ -4,12 +4,12 @@ import { cn } from '../../lib/utils';
 type Variant = 'primary' | 'secondary' | 'success' | 'danger' | 'ghost' | 'outline';
 
 const variants: Record<Variant, string> = {
-  primary: 'bg-sky-600 text-white hover:bg-sky-500',
-  secondary: 'bg-slate-800 text-slate-100 hover:bg-slate-700',
-  success: 'bg-emerald-700 text-white hover:bg-emerald-600',
-  danger: 'bg-red-800 text-white hover:bg-red-700',
-  ghost: 'bg-transparent text-slate-300 hover:bg-slate-800',
-  outline: 'border border-slate-600 bg-transparent text-slate-100 hover:bg-slate-800',
+  primary: 'bg-brand text-white hover:bg-[#1b2d40]',
+  secondary: 'border border-line bg-white text-ink hover:bg-surface2',
+  success: 'bg-success text-white hover:bg-[#145c3c]',
+  danger: 'bg-critical text-white hover:bg-[#931c14]',
+  ghost: 'bg-transparent text-muted hover:text-ink hover:bg-surface2',
+  outline: 'border border-line bg-transparent text-ink hover:bg-surface2',
 };
 
 export function Button({
@@ -20,7 +20,7 @@ export function Button({
   return (
     <button
       className={cn(
-        'inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex min-h-9 items-center justify-center rounded-[4px] px-3 py-2 text-sm font-medium shadow-[0_1px_1px_rgb(23_26_31/8%)] transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50',
         variants[variant],
         className,
       )}

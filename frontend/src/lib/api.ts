@@ -8,8 +8,8 @@ export const api = axios.create({
 });
 
 export const snapshotAPI = {
-  get: async () => {
-    const res = await fetch(`${API_URL}/api/ops/snapshot`, { cache: 'no-store' });
+  get: async (signal?: AbortSignal) => {
+    const res = await fetch(`${API_URL}/api/ops/snapshot`, { cache: 'no-store', signal });
     if (!res.ok) {
       throw new Error('Unable to load operational snapshot');
     }

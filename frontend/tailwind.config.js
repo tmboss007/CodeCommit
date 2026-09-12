@@ -8,30 +8,28 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        primary: {
-          50: '#eff6ff',
-          100: '#dbeafe',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-        },
-        danger: {
-          50: '#fef2f2',
-          500: '#ef4444',
-          600: '#dc2626',
-        },
-        warning: {
-          50: '#fffbeb',
-          500: '#f59e0b',
-          600: '#d97706',
-        },
-        success: {
-          50: '#f0fdf4',
-          500: '#22c55e',
-          600: '#16a34a',
-        },
+        bg: '#F4F5F7',
+        surface: '#FFFFFF',
+        surface2: '#F8F9FB',
+        line: '#D9DDE3',
+        ink: '#171A1F',
+        muted: '#626A75',
+        brand: '#243B53',
+        accent: '#7A2634',
+        critical: '#B42318',
+        high: '#C75B12',
+        warning: '#A15C00',
+        success: '#176B47',
+        neutral: '#59636E',
+      },
+      fontSize: {
+        page: ['2rem', { lineHeight: '1.2', fontWeight: '700' }],
+        metric: ['1.875rem', { lineHeight: '1.2', fontWeight: '600' }],
+      },
+      borderRadius: {
+        eoc: '8px',
       },
     },
   },
   plugins: [],
-}
+};

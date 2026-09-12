@@ -1,43 +1,30 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { coordinationAPI, snapshotAPI } from '../../lib/api';
+import { useMemo, useState } from 'react';
+import { coordinationAPI } from '../../lib/api';
 import { apiError } from '../../lib/ops';
+import { useOps } from '../../lib/ops-runtime';
 import { RevisedPlanBanner } from '../../components/RevisedPlanBanner';
-import { EmptyState, ErrorBanner, Notice, PageHeader } from '../../components/ui/chrome';
+import { EmptyState, ErrorBanner, Notice, PageHeader, Section } from '../../components/ui/chrome';
 import { Button } from '../../components/ui/button';
-import { Card, CardBody } from '../../components/ui/card';
-import { Badge } from '../../components/ui/badge';
 import { cn } from '../../lib/utils';
 
 const TABS = [
-  { id: 'pending', label: 'Pending Approval' },
+  { id: 'pending', label: 'Pending approval' },
   { id: 'active', label: 'Active' },
+  { id: 'completed', label: 'Completed' },
   { id: 'history', label: 'History' },
   { id: 'rejected', label: 'Rejected' },
 ] as const;
 
 export default function CoordinationPage() {
-  const [tasks, setTasks] = useState<any[]>([]);
-  const [allocations, setAllocations] = useState<any[]>([]);
-  const [snap, setSnap] = useState<any>(null);
+  const { data: snap, error: opsError, refresh } = useOps();
+  const tasks: any[] = snap?.tasks || [];
+  const allocations: any[] = snap?.allocations || [];
   const [message, setMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('pending');
-
-  const load = useCallback(async () => {
-    const res = await snapshotAPI.get();
-    setSnap(res.data);
-    setTasks(res.data.tasks || []);
-    setAllocations(res.data.allocations || []);
-  }, []);
-
-  useEffect(() => {
-    load().catch(() => setError('Could not load coordination tasks.'));
-    const t = setInterval(() => load().catch(() => null), 4000);
-    return () => clearInterval(t);
-  }, [load]);
 
   const act = async (id: string, kind: 'approve' | 'reject') => {
     try {
@@ -45,7 +32,7 @@ export default function CoordinationPage() {
       else await coordinationAPI.rejectTask(id);
       setMessage(kind === 'approve' ? 'Approved — allocation and resource state updated.' : 'Rejected — allocation was not applied.');
       setError(null);
-      await load();
+      await refresh(true);
     } catch (e) {
       setError(apiError(e, 'The decision could not be saved. Refresh and try again.'));
     }
@@ -57,7 +44,8 @@ export default function CoordinationPage() {
     return {
       pending: tasks.filter((t) => t.status === 'pending'),
       active: tasks.filter((t) => (t.status === 'approved' || t.status === 'in_progress') && planOf(t) === activePlanId),
-      history: tasks.filter((t) => t.status === 'superseded' || t.status === 'completed' || ((t.status === 'approved' || t.status === 'in_progress') && planOf(t) && planOf(t) !== activePlanId)),
+      completed: tasks.filter((t) => t.status === 'completed'),
+      history: tasks.filter((t) => t.status === 'superseded' || ((t.status === 'approved' || t.status === 'in_progress') && planOf(t) && planOf(t) !== activePlanId)),
       rejected: tasks.filter((t) => t.status === 'rejected'),
     };
   }, [tasks, allocations, activePlanId]);
@@ -66,33 +54,38 @@ export default function CoordinationPage() {
   const items = grouped[tab];
 
   return (
-    <div className="space-y-5">
-      <PageHeader
-        title="Coordination"
-        description="Approve a complete response plan in one action. The Active tab shows only the current operational plan."
-        actions={activePlanId ? <div className="text-xs text-slate-500">Current active plan {activePlanId}</div> : null}
-      />
+    <div className="space-y-8">
+      <PageHeader title="Coordination" />
       {message && <Notice>{message}</Notice>}
-      {error && <ErrorBanner message={error} />}
+      {(error || opsError) && <ErrorBanner message={error || opsError || ''} />}
+
+      <Section title="Current active plan">
+        {activePlanId ? (
+          <p className="text-sm text-ink">{activePlanId}</p>
+        ) : (
+          <p className="text-sm text-muted">No active plan. Load a scenario and approve the initial allocation.</p>
+        )}
+      </Section>
 
       <RevisedPlanBanner
         plan={snap?.revised_plan}
         delta={snap?.delta}
         explanation={snap?.explanation}
-        onChanged={load}
+        allocations={allocations}
+        onChanged={refresh}
       />
 
       {tasks.length === 0 && <EmptyState title="No agency tasks" hint="Load a scenario to generate an allocation plan." />}
 
       {pendingPlan && (
         <Button variant="ghost" className="px-0" onClick={() => setShowDetails((v) => !v)}>
-          {showDetails ? 'Hide individual task decisions' : 'Review Details — approve or reject individual cards'}
+          {showDetails ? 'Hide individual task decisions' : 'Review details — approve or reject individual tasks'}
         </Button>
       )}
 
       {(!pendingPlan || showDetails) && tasks.length > 0 && (
         <div>
-          <div role="tablist" aria-label="Task status" className="mb-3 flex flex-wrap gap-1">
+          <div role="tablist" aria-label="Task status" className="mb-3 flex flex-wrap gap-4 border-b border-line">
             {TABS.map((t) => (
               <button
                 key={t.id}
@@ -100,8 +93,8 @@ export default function CoordinationPage() {
                 aria-selected={tab === t.id}
                 onClick={() => setTab(t.id)}
                 className={cn(
-                  'rounded-md px-3 py-1.5 text-sm',
-                  tab === t.id ? 'bg-slate-100 text-slate-950' : 'text-slate-300 hover:bg-slate-800',
+                  '-mb-px border-b-2 px-0 py-2 text-sm',
+                  tab === t.id ? 'border-brand font-semibold text-ink' : 'border-transparent text-muted',
                 )}
               >
                 {t.label} ({grouped[t.id].length})
@@ -112,40 +105,40 @@ export default function CoordinationPage() {
             {items.length === 0 ? (
               <EmptyState title={`No ${tab} tasks`} />
             ) : (
-              items.map((t) => {
-                const alloc = allocations.find((a) => a.id === t.allocation_id);
-                return (
-                  <Card key={t.id} className="mb-3">
-                    <CardBody>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium text-sky-300">{t.agency_id}</span>
-                        <Badge>{t.status}</Badge>
-                        {t.plan_id && <Badge tone={t.plan_id === activePlanId ? 'success' : 'neutral'}>{t.plan_id}</Badge>}
+              <ul>
+                {items.map((t) => {
+                  const alloc = allocations.find((a) => a.id === t.allocation_id);
+                  return (
+                    <li key={t.id} className="border-b border-line py-3">
+                      <div className="flex flex-wrap items-baseline gap-3 text-sm">
+                        <span className="font-medium text-ink">{t.agency_id}</span>
+                        <span className="uppercase text-muted">{t.status}</span>
+                        {t.plan_id && <span className="text-[12px] text-muted">{t.plan_id}</span>}
                       </div>
-                      <p className="mt-1 text-sm text-white">{t.action}</p>
+                      <p className="mt-1 text-sm text-ink">{t.action}</p>
                       {alloc && (
-                        <p className="mt-2 text-xs text-slate-400">
+                        <p className="mt-1 text-[13px] text-muted">
                           {alloc.from_zone_id ? `${alloc.from_zone_id} → ` : ''}
                           {alloc.zone_id} · {alloc.reason}
                         </p>
                       )}
                       {t.status === 'pending' && (
-                        <div className="mt-3 flex gap-2">
-                          <Button variant="success" onClick={() => act(t.id, 'approve')}>Approve task</Button>
+                        <div className="mt-2 flex gap-2">
+                          <Button onClick={() => act(t.id, 'approve')}>Approve task</Button>
                           <Button variant="danger" onClick={() => act(t.id, 'reject')}>Reject task</Button>
                         </div>
                       )}
-                    </CardBody>
-                  </Card>
-                );
-              })
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </div>
         </div>
       )}
 
       {pendingPlan && !showDetails && grouped.pending.length > 0 && (
-        <p className="text-sm text-slate-400">{grouped.pending.length} pending tasks included in the plan above.</p>
+        <p className="text-sm text-muted">{grouped.pending.length} pending tasks included in the plan above.</p>
       )}
     </div>
   );

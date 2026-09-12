@@ -1,22 +1,23 @@
 'use client';
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { incidentsAPI, snapshotAPI } from '../../lib/api';
+import { useMemo, useState, type FormEvent } from 'react';
+import { incidentsAPI } from '../../lib/api';
 import { formatTimestamp } from '../../lib/utils';
-import { formatScore } from '../../lib/ops';
-import { EmptyState, ErrorBanner, PageHeader } from '../../components/ui/chrome';
+import { formatScore, severityTier } from '../../lib/ops';
+import { useOps } from '../../lib/ops-runtime';
+import { EmptyState, ErrorBanner, PageHeader, Section } from '../../components/ui/chrome';
 import { Button } from '../../components/ui/button';
-import { Card, CardBody, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input, Label, Select, Textarea } from '../../components/ui/input';
 import { Table, THead, Th, Td } from '../../components/ui/table';
 import { Badge } from '../../components/ui/badge';
 
 export default function IncidentsPage() {
-  const [incidents, setIncidents] = useState<any[]>([]);
-  const [zones, setZones] = useState<any[]>([]);
-  const [needs, setNeeds] = useState<any[]>([]);
-  const [allocations, setAllocations] = useState<any[]>([]);
-  const [resources, setResources] = useState<any[]>([]);
+  const { data, error: opsError, refresh } = useOps();
+  const incidents: any[] = data?.incidents || [];
+  const zones: any[] = data?.zones || [];
+  const needs: any[] = data?.needs || [];
+  const allocations: any[] = data?.allocations || [];
+  const resources: any[] = data?.resources || [];
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [report, setReport] = useState('');
@@ -25,19 +26,6 @@ export default function IncidentsPage() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const load = async () => {
-    const snap = await snapshotAPI.get();
-    setIncidents(snap.data.incidents || []);
-    setZones(snap.data.zones || []);
-    setNeeds(snap.data.needs || []);
-    setAllocations(snap.data.allocations || []);
-    setResources(snap.data.resources || []);
-  };
-
-  useEffect(() => {
-    load().catch(() => setError('Could not load incidents. Confirm the API is available.'));
-  }, []);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -52,7 +40,7 @@ export default function IncidentsPage() {
       setResult(res.data);
       setSelected(res.data.incident_id);
       setReport('');
-      await load();
+      await refresh(true);
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
       setError(typeof detail === 'string' ? detail : 'Incident could not be processed. Try again.');
@@ -71,11 +59,13 @@ export default function IncidentsPage() {
   const zone = zones.find((z) => z.id === incident?.zone_id);
   const incidentNeeds = needs.filter((n) => n.incident_id === incident?.id || n.zone_id === incident?.zone_id);
   const assigned = allocations.filter((a) => a.zone_id === incident?.zone_id);
+  const tier = severityTier(zone?.priority_score);
 
   return (
-    <div className="space-y-5">
-      <PageHeader title="Incidents" description="Search field reports and inspect needs, priority, and assigned resources." />
+    <div className="space-y-8">
+      <PageHeader title="Incidents" />
       {error && <ErrorBanner message={error} />}
+      {opsError && !error && <ErrorBanner message={opsError} />}
 
       <Label>
         Search incidents
@@ -88,98 +78,101 @@ export default function IncidentsPage() {
         <Table>
           <THead>
             <tr>
-              <Th>Time</Th>
-              <Th>Location</Th>
-              <Th>Type</Th>
-              <Th>Source</Th>
+              <Th>Priority</Th>
+              <Th>Incident</Th>
+              <Th>Zone</Th>
+              <Th>Severity</Th>
               <Th>Affected</Th>
               <Th>Confidence</Th>
-              <Th>Duplicate</Th>
+              <Th>Status</Th>
             </tr>
           </THead>
           <tbody>
-            {filtered.map((i) => (
-              <tr
-                key={i.id}
-                className={`cursor-pointer ${selected === i.id ? 'bg-slate-800/70' : 'hover:bg-slate-900'}`}
-                onClick={() => setSelected(i.id)}
-              >
-                <Td>{i.timestamp ? formatTimestamp(i.timestamp) : '—'}</Td>
-                <Td>{i.zone_id}</Td>
-                <Td>
-                  <Badge tone="info">{i.incident_type || 'unclassified'}</Badge>
-                </Td>
-                <Td><Badge>{i.source}</Badge></Td>
-                <Td>{i.affected_population ?? '—'}</Td>
-                <Td>{i.confidence ?? '—'}</Td>
-                <Td><Badge tone={i.duplicate_status === 'NEW' ? 'success' : 'warning'}>{i.duplicate_status || 'NEW'}</Badge></Td>
-              </tr>
-            ))}
+            {filtered.map((i) => {
+              const z = zones.find((zz) => zz.id === i.zone_id);
+              const st = severityTier(z?.priority_score);
+              return (
+                <tr
+                  key={i.id}
+                  tabIndex={0}
+                  role="button"
+                  aria-pressed={selected === i.id}
+                  className={`cursor-pointer ${selected === i.id ? 'bg-surface2' : 'hover:bg-surface2'}`}
+                  onClick={() => setSelected(i.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelected(i.id);
+                    }
+                  }}
+                >
+                  <Td><Badge tone={st.tone}>{st.label}</Badge></Td>
+                  <Td className="font-medium">{i.incident_type || 'unclassified'}</Td>
+                  <Td>{i.zone_id}</Td>
+                  <Td>{formatScore(z?.severity ?? i.analysis_result?.severity, 1)}</Td>
+                  <Td>{i.affected_population ?? '—'}</Td>
+                  <Td>{i.confidence ?? '—'}</Td>
+                  <Td>{i.status}</Td>
+                </tr>
+              );
+            })}
           </tbody>
         </Table>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle>Incident information</CardTitle></CardHeader>
-          <CardBody className="space-y-2 text-sm text-slate-300">
-            {!incident ? (
-              <EmptyState title="Select an incident" />
-            ) : (
-              <>
-                <p className="text-white">{incident.report_text}</p>
-                <p>Source {incident.source} · {incident.timestamp ? formatTimestamp(incident.timestamp) : '—'}</p>
-                <p>Location {zone ? `${zone.name}` : incident.zone_id}</p>
-                <p>Affected {incident.affected_population ?? 'unknown'} · confidence {incident.confidence ?? 'n/a'}</p>
-                <p>Status {incident.status} · {incident.id}</p>
-              </>
-            )}
-            <form onSubmit={submit} className="space-y-3 border-t border-slate-800 pt-4">
-              <Label>
-                Zone
-                <Select value={zoneId} onChange={(e) => setZoneId(e.target.value)}>
-                  {(zones.length ? zones : [{ id: 'ZONE_A', name: 'Zone A' }]).map((z: any) => (
-                    <option key={z.id} value={z.id}>{z.name || z.id}</option>
-                  ))}
-                </Select>
-              </Label>
-              <Label>
-                Source
-                <Input value={source} onChange={(e) => setSource(e.target.value)} />
-              </Label>
-              <Label>
-                Description
-                <Textarea required value={report} onChange={(e) => setReport(e.target.value)} rows={4} />
-              </Label>
-              <Button disabled={busy}>{busy ? 'Processing…' : 'Submit report'}</Button>
-            </form>
-            {result && (
-              <div className="text-xs text-slate-400">
-                Created {result.incident_id}. Duplicate {result.duplicate_check?.duplicate_status}. Priority {formatScore(result.zone_priority_updated)}.
-                {result.replanning_required ? ` Replan: ${result.replanning_reason}` : ' No replan required.'}
-              </div>
-            )}
-          </CardBody>
-        </Card>
-        <Card>
-          <CardHeader><CardTitle>Needs / priority / allocation</CardTitle></CardHeader>
-          <CardBody className="space-y-3 text-sm text-slate-300">
-            <p>Response priority {formatScore(zone?.priority_score)} / 100 · severity {formatScore(zone?.severity, 1)} / 10</p>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Needs</div>
-              {incidentNeeds.length === 0 ? 'None recorded' : incidentNeeds.slice(0, 10).map((n) => (
-                <div key={n.id}>{n.resource_type}: {n.quantity_required} {n.unit} required · remaining {n.quantity_remaining ?? '—'}</div>
-              ))}
+      <div className="grid gap-8 lg:grid-cols-12">
+        <Section title="Incident detail" className="lg:col-span-7">
+          {!incident ? (
+            <EmptyState title="Select an incident" />
+          ) : (
+            <div className="space-y-2 border-t border-line pt-3 text-sm">
+              <p>{incident.report_text}</p>
+              <p className="text-muted">Source {incident.source} · {incident.timestamp ? formatTimestamp(incident.timestamp) : '—'}</p>
+              <p className="text-muted">Location {zone ? zone.name : incident.zone_id} · {incident.id}</p>
+              <p className="text-muted">
+                Priority <Badge tone={tier.tone}>{tier.label}</Badge> {formatScore(zone?.priority_score, 2)} · severity {formatScore(zone?.severity, 1)} / 10
+              </p>
             </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Assigned resources</div>
-              {assigned.length === 0 ? 'None yet' : assigned.map((a) => {
-                const r = resources.find((x) => x.id === a.resource_id);
-                return <div key={a.id}>{r?.name || a.resource_id} → {a.zone_id} ({a.status})</div>;
-              })}
-            </div>
-          </CardBody>
-        </Card>
+          )}
+          <form onSubmit={submit} className="mt-6 space-y-3 border-t border-line pt-4">
+            <Label>
+              Zone
+              <Select value={zoneId} onChange={(e) => setZoneId(e.target.value)}>
+                {(zones.length ? zones : [{ id: 'ZONE_A', name: 'Zone A' }]).map((z: any) => (
+                  <option key={z.id} value={z.id}>{z.name || z.id}</option>
+                ))}
+              </Select>
+            </Label>
+            <Label>
+              Source
+              <Input value={source} onChange={(e) => setSource(e.target.value)} />
+            </Label>
+            <Label>
+              Description
+              <Textarea required value={report} onChange={(e) => setReport(e.target.value)} rows={4} />
+            </Label>
+            <Button disabled={busy}>{busy ? 'Processing…' : 'Submit report'}</Button>
+          </form>
+          {result && (
+            <p className="mt-3 text-[13px] text-muted">
+              Created {result.incident_id}. Duplicate {result.duplicate_check?.duplicate_status}. Priority {formatScore(result.zone_priority_updated)}.
+              {result.replanning_required ? ` Replan: ${result.replanning_reason}` : ' No replan required.'}
+            </p>
+          )}
+        </Section>
+        <Section title="Needs and assignments" className="lg:col-span-5">
+          <div className="border-t border-line pt-3 text-sm">
+            <div className="mb-2 font-medium">Needs</div>
+            {incidentNeeds.length === 0 ? <p className="text-muted">None recorded</p> : incidentNeeds.slice(0, 10).map((n) => (
+              <div key={n.id} className="border-b border-line py-1.5">{n.resource_type}: {n.quantity_required} {n.unit} required · remaining {n.quantity_remaining ?? '—'}</div>
+            ))}
+            <div className="mb-2 mt-4 font-medium">Assigned resources</div>
+            {assigned.length === 0 ? <p className="text-muted">None yet</p> : assigned.map((a) => {
+              const r = resources.find((x) => x.id === a.resource_id);
+              return <div key={a.id} className="border-b border-line py-1.5">{r?.name || a.resource_id} → {a.zone_id} ({a.status})</div>;
+            })}
+          </div>
+        </Section>
       </div>
     </div>
   );

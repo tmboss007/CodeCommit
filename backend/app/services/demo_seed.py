@@ -98,3 +98,5 @@ def seed_base_entities(db):
             status="available",
         ))
     db.commit()
+    from app.core.spatial import sync_point_locations
+    sync_point_locations(db)

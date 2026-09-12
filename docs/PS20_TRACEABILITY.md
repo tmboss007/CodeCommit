@@ -19,10 +19,11 @@ Internal mapping of CodeCommit product surfaces to PS20 requirements.
 
 | Integration | Status |
 | --- | --- |
-| IMD | SIMULATED / ADAPTER READY |
-| GDACS | SIMULATED / ADAPTER READY |
-| MOSDAC | SIMULATED / ADAPTER READY |
-| Routing | SIMULATED |
-| WebSockets | NOT IMPLEMENTED (polling) |
-| LangGraph | NOT IMPLEMENTED |
-| PostgreSQL/PostGIS default | NOT USED (SQLite MVP) |
+| IMD | SIMULATION / ADAPTER READY (live client documented; blocked without IMD_API_KEY) |
+| GDACS | LIVE INTEGRATED (default SIMULATION; `GDACS_MODE=live` uses official Events API) |
+| MOSDAC | ADAPTER READY / SIMULATION |
+| Routing | SIMULATION (OSRM adapter if OSRM_BASE_URL set) |
+| WebSockets | NOT IMPLEMENTED |
+| SSE operational stream | IMPLEMENTED (`GET /api/events/stream`, polling fallback) |
+| LangGraph | IMPLEMENTED (orchestrates existing incident steps; approval remains HTTP) |
+| PostgreSQL/PostGIS default | PARTIALLY IMPLEMENTED (compose + schema; SQLite still the verified local demo) |

@@ -1,10 +1,11 @@
 import type { InputHTMLAttributes, LabelHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
 import { cn } from '../../lib/utils';
 
-const field = 'mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400';
+const field =
+  'mt-1 w-full rounded-[6px] border border-line bg-white px-3 py-2 text-sm text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand';
 
 export function Label({ className, ...props }: LabelHTMLAttributes<HTMLLabelElement>) {
-  return <label className={cn('block text-sm text-slate-300', className)} {...props} />;
+  return <label className={cn('block text-sm text-ink', className)} {...props} />;
 }
 
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {

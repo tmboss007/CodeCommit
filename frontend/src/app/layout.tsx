@@ -1,14 +1,17 @@
 import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
 import './globals.css';
-import { Nav } from '../components/Nav';
+import { AppShell } from '../components/AppShell';
+
+const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   metadataBase: new URL('http://localhost:3000'),
-  title: 'CodeCommit — Emergency Resource Orchestration',
-  description: 'Real-time decision support for coordinating emergency resources across changing disaster situations.',
+  title: 'CodeCommit — Emergency Operations Platform',
+  description: 'Decision support for coordinating emergency resources across changing disaster situations.',
   openGraph: {
-    title: 'CodeCommit — Emergency Resource Orchestration',
-    description: 'Real-time decision support for coordinating emergency resources across changing disaster situations.',
+    title: 'CodeCommit — Emergency Operations Platform',
+    description: 'Decision support for coordinating emergency resources across changing disaster situations.',
     siteName: 'CodeCommit',
   },
 };
@@ -16,9 +19,8 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-slate-950 text-slate-100">
-        <Nav />
-        <main className="mx-auto max-w-[88rem] px-4 py-6">{children}</main>
+      <body className={`${inter.className} min-h-screen bg-bg text-ink antialiased`}>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

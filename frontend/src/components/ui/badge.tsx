@@ -4,14 +4,14 @@ import { cn } from '../../lib/utils';
 type Tone = 'neutral' | 'critical' | 'high' | 'elevated' | 'stable' | 'success' | 'warning' | 'info';
 
 const tones: Record<Tone, string> = {
-  neutral: 'border-slate-600 bg-slate-800 text-slate-200',
-  critical: 'border-red-700 bg-red-950 text-red-200',
-  high: 'border-orange-700 bg-orange-950 text-orange-200',
-  elevated: 'border-amber-700 bg-amber-950 text-amber-200',
-  stable: 'border-sky-700 bg-sky-950 text-sky-200',
-  success: 'border-emerald-700 bg-emerald-950 text-emerald-200',
-  warning: 'border-amber-700 bg-amber-950 text-amber-100',
-  info: 'border-slate-500 bg-slate-800 text-slate-100',
+  neutral: 'bg-[#eef1f4] text-neutral',
+  critical: 'bg-[#fbe9e7] text-critical',
+  high: 'bg-[#fff0e4] text-high',
+  elevated: 'bg-[#fff4df] text-warning',
+  stable: 'bg-[#eef1f4] text-muted',
+  success: 'bg-[#e6f4ed] text-success',
+  warning: 'bg-[#fff4df] text-warning',
+  info: 'bg-[#edf2f7] text-muted',
 };
 
 export function Badge({
@@ -24,7 +24,7 @@ export function Badge({
   children: ReactNode;
 }) {
   return (
-    <span className={cn('inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide', tones[tone], className)}>
+    <span className={cn('inline-flex items-center rounded-[3px] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.05em]', tones[tone], className)}>
       {children}
     </span>
   );

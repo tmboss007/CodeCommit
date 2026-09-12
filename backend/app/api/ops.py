@@ -4,8 +4,7 @@ from app.core.database import get_db
 from app.models import (
     Zone, Incident, Resource, Allocation, CoordinationTask, AuditEvent, Need, Agency, AppState,
 )
-from app.providers import weather_provider, disaster_provider, satellite_provider
-from app.services.routing import SimulationRoutingProvider
+from app.providers.registry import data_sources_for_snapshot, get_disaster_provider, provider_status
 from app.services.orchestration import OrchestrationService
 
 router = APIRouter(prefix="/api", tags=["ops"])
@@ -90,6 +89,7 @@ def snapshot(db: Session = Depends(get_db)):
 
     return {
         "data_mode": (state.data_mode if state else "SIMULATION"),
+        "data_sources": data_sources_for_snapshot(),
         "last_plan_id": state.last_plan_id if state else None,
         "last_plan_status": state.last_plan_status if state else None,
         "active_plan_id": state.active_plan_id if state else None,
@@ -172,11 +172,13 @@ def snapshot(db: Session = Depends(get_db)):
 
 
 @router.get("/providers/status")
-def provider_status():
-    routing = SimulationRoutingProvider()
-    return {
-        "imd": {"mode": weather_provider.mode, "sample": weather_provider.current(19.076, 72.877)},
-        "gdacs": {"mode": disaster_provider.mode, "sample": disaster_provider.events()[0]},
-        "mosdac": {"mode": satellite_provider.mode, "sample": satellite_provider.snapshot("ZONE_A")},
-        "routing": {"mode": routing.mode},
-    }
+def providers_status():
+    return provider_status()
+
+
+@router.post("/providers/ingest")
+def ingest_provider_event(source: str = "gdacs", db: Session = Depends(get_db)):
+    events = get_disaster_provider().fetch_events()
+    if not events:
+        return {"ingested": 0, "error": "no_events"}
+    return OrchestrationService(db).ingest_external_event(events[0], auto_replan=True)

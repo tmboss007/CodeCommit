@@ -1,21 +1,22 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { resourcesAPI, snapshotAPI } from '../../lib/api';
+import { useMemo, useState } from 'react';
+import { resourcesAPI } from '../../lib/api';
 import { apiError, resourceCallsign } from '../../lib/ops';
+import { useOps } from '../../lib/ops-runtime';
 import { EmptyState, ErrorBanner, Notice, PageHeader } from '../../components/ui/chrome';
 import { Label, Select, Input } from '../../components/ui/input';
 import { Table, THead, Th, Td } from '../../components/ui/table';
-import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Dialog } from '../../components/ui/dialog';
 
 const STATUSES = ['available', 'reserved', 'en_route', 'deployed', 'unavailable', 'maintenance'];
 
 export default function ResourcesPage() {
-  const [resources, setResources] = useState<any[]>([]);
-  const [allocations, setAllocations] = useState<any[]>([]);
-  const [zones, setZones] = useState<any[]>([]);
+  const { data, error: opsError, refresh } = useOps();
+  const resources: any[] = data?.resources || [];
+  const allocations: any[] = data?.allocations || [];
+  const zones: any[] = data?.zones || [];
   const [status, setStatus] = useState('');
   const [type, setType] = useState('');
   const [agency, setAgency] = useState('');
@@ -24,19 +25,6 @@ export default function ResourcesPage() {
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState({ status: 'available', current_zone_id: '', eta_minutes: '' });
   const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    const r = await snapshotAPI.get();
-    setResources(r.data.resources || []);
-    setAllocations(r.data.allocations || []);
-    setZones(r.data.zones || []);
-  }, []);
-
-  useEffect(() => {
-    load().catch(() => setError('Could not load resource inventory.'));
-    const t = setInterval(() => load().catch(() => null), 4000);
-    return () => clearInterval(t);
-  }, [load]);
 
   const filtered = useMemo(
     () => resources.filter((r) => (!status || r.status === status) && (!type || r.type === type) && (!agency || r.agency_id === agency)),
@@ -66,7 +54,7 @@ export default function ResourcesPage() {
       });
       setMessage(`${resourceCallsign(editing)} updated.`);
       setEditing(null);
-      await load();
+      await refresh(true);
     } catch (e) {
       setError(apiError(e, 'The resource could not be updated.'));
     } finally {
@@ -76,9 +64,10 @@ export default function ResourcesPage() {
 
   return (
     <div>
-      <PageHeader title="Resources" description="Digital twin of inventory. Edit status, assignment, and ETA. Changes are validated and audited by the backend." />
+      <PageHeader title="Resources" />
       {message && <div className="mb-4"><Notice>{message}</Notice></div>}
       {error && <div className="mb-4"><ErrorBanner message={error} /></div>}
+      {opsError && !error && <div className="mb-4"><ErrorBanner message={opsError} /></div>}
       <div className="mb-4 flex flex-wrap gap-2">
         <Select aria-label="Filter by status" value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">All statuses</option>
@@ -122,14 +111,12 @@ export default function ResourcesPage() {
               const assignment = alloc?.from_zone_id ? `${alloc.from_zone_id} → ${alloc.zone_id}` : (r.current_zone_id || '—');
               return (
                 <tr key={r.id}>
-                  <Td className="font-medium text-white">{resourceCallsign(r)}</Td>
+                  <Td className="font-medium">{resourceCallsign(r)}</Td>
                   <Td>{r.agency_id}</Td>
                   <Td>{r.type}</Td>
                   <Td>{Array.isArray(r.capabilities) ? r.capabilities.join(', ') : '—'}</Td>
-                  <Td>
-                    <Badge tone={r.status === 'en_route' ? 'warning' : r.status === 'available' ? 'success' : 'info'}>
-                      {(r.status || '').replace('_', ' ')}
-                    </Badge>
+                  <Td className={r.status === 'unavailable' ? 'uppercase text-muted' : 'uppercase'}>
+                    {(r.status || '').replace('_', ' ')}
                   </Td>
                   <Td>{r.latitude && r.longitude ? `${Number(r.latitude).toFixed(3)}, ${Number(r.longitude).toFixed(3)}` : '—'}</Td>
                   <Td>{assignment}</Td>
@@ -146,7 +133,7 @@ export default function ResourcesPage() {
 
       {editing && (
         <Dialog title="Edit Resource" onClose={() => !busy && setEditing(null)}>
-          <p className="mb-3 text-sm font-medium text-white">{resourceCallsign(editing)}</p>
+          <p className="mb-3 text-sm font-medium">{resourceCallsign(editing)}</p>
           <Label>
             Status
             <Select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>

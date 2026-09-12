@@ -1,53 +1,52 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { snapshotAPI } from '../../lib/api';
-import { kindForActor } from '../../lib/ops';
+import { useState } from 'react';
+import { eventKind, formatEventLabel } from '../../lib/ops';
+import { useOps } from '../../lib/ops-runtime';
 import { EmptyState, ErrorBanner, PageHeader } from '../../components/ui/chrome';
-import { Badge } from '../../components/ui/badge';
+import { cn } from '../../lib/utils';
+
+const kindClass: Record<string, string> = {
+  approved: 'text-success',
+  replan: 'text-brand',
+  resource: 'text-ink',
+  priority: 'text-high',
+  default: 'text-ink',
+};
 
 export default function AuditPage() {
-  const [events, setEvents] = useState<any[]>([]);
+  const { data, error } = useOps();
+  const events = data?.audit || [];
   const [open, setOpen] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    snapshotAPI.get()
-      .then((r) => setEvents(r.data.audit || []))
-      .catch(() => setError('Could not load the audit log.'));
-  }, []);
 
   return (
     <div>
-      <PageHeader title="Audit" description="Operational timeline of analysis, allocation, approval, and replanning. Expand an event for previous and new state." />
+      <PageHeader title="Audit" />
       {error && <ErrorBanner message={error} />}
       {events.length === 0 && !error ? (
         <EmptyState title="Audit log is empty" hint="Operational actions will appear here." />
       ) : (
-        <ol className="relative space-y-3 border-l border-slate-800 pl-5">
-          {events.map((e) => {
+        <ol>
+          {events.map((e: any) => {
             const expanded = open === e.id;
+            const kind = eventKind(e.event_type);
             return (
-              <li key={e.id}>
-                <span aria-hidden className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border border-slate-500 bg-slate-900" />
+              <li key={e.id} className="border-b border-line">
                 <button
                   type="button"
                   aria-expanded={expanded}
                   onClick={() => setOpen(expanded ? null : e.id)}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900 p-3 text-left hover:border-slate-600"
+                  className="w-full py-3 text-left"
                 >
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                    <span>{e.timestamp ? new Date(e.timestamp).toLocaleString() : '—'}</span>
-                    <Badge tone="info">{e.event_type}</Badge>
-                    <Badge>{kindForActor(e.agent)}</Badge>
+                  <div className="flex flex-wrap items-baseline gap-3 text-[13px] text-muted">
+                    <span className="tabular-nums">{e.timestamp ? new Date(e.timestamp).toLocaleString() : '—'}</span>
+                    <span className={cn('font-semibold', kindClass[kind])}>{formatEventLabel(e.event_type)}</span>
                     <span>{e.agent || e.actor}</span>
-                    {e.correlation_id && <span>corr {e.correlation_id}</span>}
                   </div>
-                  <p className="mt-1 text-sm text-slate-100">{e.description}</p>
-                  <p className="mt-1 text-xs text-slate-500">Reason: {e.reason || e.description}</p>
+                  <p className="mt-1 text-sm text-ink">{e.description}</p>
                 </button>
                 {expanded && (
-                  <div className="mt-2 grid gap-3 rounded-md border border-slate-800 bg-slate-950 p-3 text-xs text-slate-300 md:grid-cols-2">
+                  <div className="mb-3 grid gap-3 bg-surface2 p-3 text-[12px] text-muted md:grid-cols-2">
                     <pre className="overflow-auto whitespace-pre-wrap">Previous state{'\n'}{JSON.stringify(e.previous_state ?? null, null, 2)}</pre>
                     <pre className="overflow-auto whitespace-pre-wrap">New state{'\n'}{JSON.stringify(e.new_state ?? null, null, 2)}</pre>
                   </div>

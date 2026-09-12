@@ -9,13 +9,13 @@
 | Claim | Reality |
 | --- | --- |
 | PostgreSQL + PostGIS + Redis required | App runs on SQLite; Redis unused at runtime |
-| LangGraph orchestration | Not imported or used |
-| WebSockets for live dashboard | Not implemented (HTTP polling only) |
+| LangGraph orchestration | IMPLEMENTED — `incident_graph.py` wraps existing OrchestrationService steps |
+| WebSockets for live dashboard | Not implemented; SSE + polling fallback is implemented |
 | MapLibre command-center map | Dependency listed; no map component or pages |
 | Full command-center screens | Only `frontend/src/app/page.tsx` exists; `/incidents`, `/resources`, `/coordination` 404 |
 | Human approval changes operational state | Approval flips task/allocation status only; resources stay `available` |
 | Dynamic replan on new reports | `old_state` is hardcoded empty, so live replanning never compares real snapshots |
-| IMD/GDACS/MOSDAC | No provider adapters |
+| IMD/GDACS/MOSDAC | GDACS live adapter + mocks; IMD/MOSDAC adapter-ready without claiming live without keys |
 | Simulation controls | No `/api/simulation/*` endpoints or UI |
 
 ## Requirement status
@@ -37,7 +37,7 @@
 | MapLibre map | MISSING | |
 | Simulation engine | MISSING | |
 | External adapters | MISSING | |
-| WebSocket/SSE | MISSING | |
+| WebSocket/SSE | SSE IMPLEMENTED (polling fallback); WebSockets unused | |
 | 5-zone demo seed | PARTIALLY IMPLEMENTED | Zones exist; initial incidents/plan not loaded as a demo scenario |
 | E2E closed-loop test | MISSING | Unit tests for priority/optimizer/replanner only |
 

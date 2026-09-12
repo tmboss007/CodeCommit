@@ -1,52 +1,28 @@
-from datetime import datetime, timezone
-from typing import Dict, List
+from app.providers.gdacs import DisasterEventProvider, MockDisasterEventProvider
+from app.providers.imd import MockWeatherProvider, WeatherProvider
+from app.providers.mosdac import MockSatelliteProvider, SatelliteProvider
+from app.providers.registry import (
+    data_sources_for_snapshot,
+    get_disaster_provider,
+    get_satellite_provider,
+    get_weather_provider,
+    provider_status,
+)
 
+weather_provider = MockWeatherProvider()
+disaster_provider = MockDisasterEventProvider()
+satellite_provider = MockSatelliteProvider()
 
-class WeatherProvider:
-    mode = "SIMULATION"
-
-    def current(self, lat: float, lon: float) -> Dict:
-        return {
-            "provider": "IMD",
-            "mode": self.mode,
-            "location": {"lat": lat, "lon": lon},
-            "condition": "Heavy rain (simulated)",
-            "rainfall_mm": 42,
-            "warning": "Orange alert — coastal flooding risk",
-            "observed_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-
-class DisasterEventProvider:
-    mode = "SIMULATION"
-
-    def events(self) -> List[Dict]:
-        return [
-            {
-                "provider": "GDACS",
-                "mode": self.mode,
-                "event_type": "flood",
-                "severity": "Orange",
-                "title": "Simulated flood event — Mumbai coastal belt",
-                "observed_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ]
-
-
-class SatelliteProvider:
-    mode = "SIMULATION"
-
-    def snapshot(self, zone_id: str) -> Dict:
-        return {
-            "provider": "MOSDAC",
-            "mode": self.mode,
-            "zone_id": zone_id,
-            "inundation_indicator": "elevated",
-            "cloud_cover_pct": 78,
-            "observed_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-
-weather_provider = WeatherProvider()
-disaster_provider = DisasterEventProvider()
-satellite_provider = SatelliteProvider()
+__all__ = [
+    "WeatherProvider",
+    "DisasterEventProvider",
+    "SatelliteProvider",
+    "weather_provider",
+    "disaster_provider",
+    "satellite_provider",
+    "get_weather_provider",
+    "get_disaster_provider",
+    "get_satellite_provider",
+    "provider_status",
+    "data_sources_for_snapshot",
+]

@@ -48,6 +48,9 @@ Add-Content .gitignore "frontend/tsconfig.tsbuildinfo"
 logs/
 *.log
 
+# Local SQLite backups (do not commit)
+backend/backups/
+
 # OS
 Thumbs.db
 .DS_Store

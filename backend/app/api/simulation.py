@@ -78,4 +78,4 @@ def increase_demand(zone_id: str = "ZONE_A", db: Session = Depends(get_db)):
 
 @router.post("/run-replan")
 def run_replan(db: Session = Depends(get_db)):
-    return OrchestrationService(db).generate_allocation_plan(trigger="manual_replan")
+    return OrchestrationService(db).run_replan()

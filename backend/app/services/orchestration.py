@@ -12,6 +12,7 @@ from app.services.priority import PriorityCalculator, NeedsCalculator, calculate
 from app.services.optimizer import ResourceOptimizer, EXCLUSIVE_TYPES
 from app.core.database import Base, engine
 from app.services.demo_seed import seed_base_entities, INITIAL_REPORTS, URGENT_ZONE_A_REPORT
+from app.services.incident_graph import run_incident_pipeline
 
 ALLOCATABLE = {"available"}
 
@@ -24,6 +25,7 @@ class OrchestrationService:
         self.coordination_agent = CoordinationAgent()
         self.replanning_agent = ReplanningAgent()
         self.optimizer = ResourceOptimizer()
+        self._pending_events = []
 
     def _get_state(self) -> AppState:
         state = self.db.query(AppState).filter(AppState.id == "singleton").first()
@@ -34,19 +36,11 @@ class OrchestrationService:
             self.db.refresh(state)
         return state
 
-    def process_incident_report(
-        self,
-        report_text: str,
-        source: str,
-        zone_id: Optional[str] = None,
-        correlation_id: Optional[str] = None,
-        auto_replan: bool = True,
-    ) -> Dict:
-        if not correlation_id:
-            correlation_id = f"corr_{uuid.uuid4().hex[:8]}"
+    def abort_pipeline(self):
+        self.db.rollback()
+        self._pending_events.clear()
 
-        old_snapshot = self._current_snapshot()
-
+    def situation_step(self, report_text: str, source: str, zone_id: Optional[str], correlation_id: str) -> Dict:
         self._log_event(
             "INCIDENT_CREATED",
             "Situation Agent received a new report",
@@ -54,24 +48,23 @@ class OrchestrationService:
             correlation_id=correlation_id,
             new_state={"source": source},
         )
-
         situation_result = self.situation_agent.analyze_report(report_text, zone_id)
-        resolved_zone = situation_result.get("zone_id") or zone_id or "ZONE_A"
-        situation_result["zone_id"] = resolved_zone
+        situation_result["zone_id"] = situation_result.get("zone_id") or zone_id or "ZONE_A"
+        return situation_result
 
+    def duplicate_step(self, report_text: str, structured: Dict, correlation_id: str) -> Dict:
+        resolved_zone = structured.get("zone_id") or "ZONE_A"
         existing_incidents = self.db.query(Incident).filter(
             Incident.zone_id == resolved_zone,
             Incident.status == "active",
         ).all()
-
         duplicate_result = self.duplicate_agent.check_duplicate(
             report_text,
             [{"id": i.id, "zone_id": i.zone_id, "incident_type": i.incident_type,
               "timestamp": i.timestamp, "report_text": i.report_text} for i in existing_incidents],
             zone_id=resolved_zone,
-            incident_type=situation_result.get("incident_type") or "other",
+            incident_type=structured.get("incident_type") or "other",
         )
-
         self._log_event(
             "DUPLICATE_DETECTED" if duplicate_result.get("is_duplicate") else "INCIDENT_ANALYZED",
             duplicate_result.get("explanation") or "Duplicate Agent evaluated overlap",
@@ -79,39 +72,38 @@ class OrchestrationService:
             correlation_id=correlation_id,
             new_state=duplicate_result,
         )
+        return duplicate_result
 
-        affected = situation_result.get("affected_population")
+    def needs_step(self, report_text: str, source: str, structured: Dict, duplicate_result: Dict, correlation_id: str):
+        affected = structured.get("affected_population")
         if affected is None:
             affected = 400
-            situation_result["affected_population"] = affected
-            situation_result["population_estimated"] = True
-
-        vulnerable = situation_result.get("vulnerable_population")
+            structured["affected_population"] = affected
+            structured["population_estimated"] = True
+        vulnerable = structured.get("vulnerable_population")
         if vulnerable is None:
             vulnerable = int(affected * 0.16)
-            situation_result["vulnerable_population"] = vulnerable
-
+            structured["vulnerable_population"] = vulnerable
         incident = Incident(
             id=f"inc_{uuid.uuid4().hex[:8]}",
-            zone_id=resolved_zone,
+            zone_id=structured.get("zone_id") or "ZONE_A",
             source=source,
             report_text=report_text,
-            incident_type=situation_result.get("incident_type"),
+            incident_type=structured.get("incident_type"),
             affected_population=affected,
             vulnerable_population=vulnerable,
-            confidence=situation_result.get("confidence"),
+            confidence=structured.get("confidence"),
             status="active",
             duplicate_group_id=(duplicate_result.get("matched_incidents") or [None])[0],
             duplicate_status=duplicate_result.get("duplicate_status") or "NEW",
-            analysis_result=situation_result,
+            analysis_result=structured,
         )
         self.db.add(incident)
-
         needs_list = NeedsCalculator.calculate_needs(
             affected,
             vulnerable,
-            situation_result.get("incident_type", "other"),
-            situation_result.get("severity", 5.0),
+            structured.get("incident_type", "other"),
+            structured.get("severity", 5.0),
         )
         for need in needs_list:
             self.db.add(Need(
@@ -124,7 +116,6 @@ class OrchestrationService:
                 urgency=need["urgency"],
                 unit=need.get("unit"),
             ))
-
         water = next((n for n in needs_list if n["type"] == "water_liter"), None)
         self._log_event(
             "NEEDS_UPDATED",
@@ -134,10 +125,13 @@ class OrchestrationService:
             correlation_id=correlation_id,
             new_state={"needs": needs_list},
         )
+        return incident.id, needs_list
 
-        zone = self.db.query(Zone).filter(Zone.id == resolved_zone).first()
+    def priority_step(self, incident_id: str, correlation_id: str):
+        incident = self.db.query(Incident).filter(Incident.id == incident_id).first()
+        zone = self.db.query(Zone).filter(Zone.id == incident.zone_id).first() if incident else None
         old_priority = zone.priority_score if zone else None
-        if zone:
+        if zone and incident:
             self._update_zone_priority(zone, incident)
             self._log_event(
                 "PRIORITY_CHANGED",
@@ -147,9 +141,12 @@ class OrchestrationService:
                 previous_state={"priority": old_priority},
                 new_state={"priority": zone.priority_score, "breakdown": zone.priority_breakdown},
             )
-
         self.db.commit()
+        return (zone.priority_score if zone else None), (zone.priority_breakdown if zone else None), old_priority
 
+    def replanning_step(self, old_snapshot: Dict, old_priority, incident_id: str, auto_replan: bool, correlation_id: str):
+        incident = self.db.query(Incident).filter(Incident.id == incident_id).first()
+        zone = self.db.query(Zone).filter(Zone.id == incident.zone_id).first() if incident else None
         should_replan, reason, details = self.replanning_agent.should_replan(
             old_snapshot,
             self._current_snapshot(),
@@ -159,22 +156,6 @@ class OrchestrationService:
             should_replan = True
             reason = f"Zone {zone.id} priority change: {old_priority:.0f} → {zone.priority_score:.0f}"
             details = {"priority_changes": [{"zone_id": zone.id, "old_priority": old_priority, "new_priority": zone.priority_score}]}
-
-        result = {
-            "incident_id": incident.id,
-            "zone_id": incident.zone_id,
-            "situation_analysis": situation_result,
-            "duplicate_check": duplicate_result,
-            "needs_created": len(needs_list),
-            "needs": needs_list,
-            "zone_priority_updated": zone.priority_score if zone else None,
-            "priority_breakdown": zone.priority_breakdown if zone else None,
-            "replanning_required": should_replan,
-            "replanning_reason": reason,
-            "correlation_id": correlation_id,
-            "plan": None,
-        }
-
         if auto_replan and should_replan:
             self._log_event(
                 "REPLAN_TRIGGERED",
@@ -183,13 +164,90 @@ class OrchestrationService:
                 correlation_id=correlation_id,
                 new_state=details,
             )
-            result["plan"] = self.generate_allocation_plan(
-                correlation_id=correlation_id,
-                trigger=reason,
-                prior_snapshot=old_snapshot,
-            )
+        return should_replan, reason, details
 
+    def process_incident_report(
+        self,
+        report_text: str,
+        source: str,
+        zone_id: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        auto_replan: bool = True,
+    ) -> Dict:
+        if not correlation_id:
+            correlation_id = f"corr_{uuid.uuid4().hex[:8]}"
+        try:
+            out = run_incident_pipeline(
+                self,
+                report_text=report_text,
+                source=source,
+                zone_id=zone_id,
+                correlation_id=correlation_id,
+                auto_replan=auto_replan,
+            )
+        except Exception as exc:
+            self.abort_pipeline()
+            return {
+                "error": "pipeline_failed",
+                "details": [str(exc)],
+                "correlation_id": correlation_id,
+                "plan": None,
+                "replanning_required": False,
+            }
+        structured = out.get("structured_incident") or {}
+        if out.get("errors"):
+            return {
+                "error": "pipeline_failed",
+                "details": out["errors"],
+                "correlation_id": correlation_id,
+                "incident_id": out.get("incident_id"),
+                "zone_id": structured.get("zone_id") or zone_id,
+                "replanning_required": False,
+                "plan": None,
+            }
+        return {
+            "incident_id": out.get("incident_id"),
+            "zone_id": structured.get("zone_id") or zone_id,
+            "situation_analysis": structured,
+            "duplicate_check": out.get("duplicate_result"),
+            "needs_created": out.get("needs_created") or 0,
+            "needs": out.get("needs_list") or [],
+            "zone_priority_updated": out.get("zone_priority"),
+            "priority_breakdown": out.get("priority_breakdown"),
+            "replanning_required": out.get("replan_required"),
+            "replanning_reason": out.get("replanning_reason"),
+            "correlation_id": correlation_id,
+            "plan": out.get("current_plan"),
+        }
+
+    def ingest_external_event(self, event: Dict, auto_replan: bool = True) -> Dict:
+        """Map a normalized provider event onto the existing incident pipeline."""
+        loc = event.get("location") or {}
+        zone_id = self._nearest_zone_id(loc.get("lat"), loc.get("lon"))
+        source = event.get("source") or "external"
+        title = event.get("title") or event.get("event_type") or "External event"
+        alert = event.get("alert_level") or ""
+        report = f"{source} {alert} {event.get('event_type') or 'event'}: {title}."
+        if loc.get("country"):
+            report += f" Country: {loc.get('country')}."
+        result = self.process_incident_report(
+            report_text=report,
+            source=source,
+            zone_id=zone_id,
+            auto_replan=auto_replan,
+        )
+        result["provider_event"] = {
+            "source": source,
+            "data_mode": event.get("data_mode"),
+            "event_time": event.get("event_time"),
+            "fetched_at": event.get("fetched_at"),
+            "external_id": event.get("external_id"),
+        }
         return result
+
+    def _nearest_zone_id(self, lat, lon) -> str:
+        from app.core.spatial import nearest_zone_id
+        return nearest_zone_id(self.db, lat, lon)
 
     def generate_allocation_plan(
         self,
@@ -199,7 +257,10 @@ class OrchestrationService:
     ) -> Dict:
         if not correlation_id:
             correlation_id = f"corr_{uuid.uuid4().hex[:8]}"
+        packed = self.optimization_step(correlation_id=correlation_id, trigger=trigger, prior_snapshot=prior_snapshot)
+        return self.coordination_step(packed)
 
+    def optimization_step(self, correlation_id: str, trigger: str = "manual", prior_snapshot: Optional[Dict] = None) -> Dict:
         plan_id = f"plan_{uuid.uuid4().hex[:8]}"
         app_state = self._get_state()
         previous_plan_id = app_state.active_plan_id
@@ -234,12 +295,11 @@ class OrchestrationService:
             zones_data, resources_data, needs_by_zone, distances
         )
 
-        allocation_objs = []
         for alloc in allocations:
             resource = self.db.query(Resource).filter(Resource.id == alloc["resource_id"]).first()
             from_zone = resource.current_zone_id if resource else None
             alloc["from_zone_id"] = from_zone
-            obj = Allocation(
+            self.db.add(Allocation(
                 id=alloc["id"],
                 resource_id=alloc["resource_id"],
                 zone_id=alloc["zone_id"],
@@ -250,11 +310,36 @@ class OrchestrationService:
                 status="pending",
                 plan_id=plan_id,
                 from_zone_id=from_zone,
-            )
-            self.db.add(obj)
-            allocation_objs.append(obj)
+            ))
 
         self.db.commit()
+        return {
+            "plan_id": plan_id,
+            "correlation_id": correlation_id,
+            "trigger": trigger,
+            "previous_plan_id": previous_plan_id,
+            "prior_snapshot": prior_snapshot,
+            "old_allocations": old_allocations,
+            "allocations": allocations,
+            "unmet_demands": unmet_demands,
+            "explanation": explanation,
+            "resources_data": resources_data,
+            "zones_data": zones_data,
+        }
+
+    def coordination_step(self, packed: Dict) -> Dict:
+        plan_id = packed["plan_id"]
+        correlation_id = packed["correlation_id"]
+        trigger = packed["trigger"]
+        previous_plan_id = packed["previous_plan_id"]
+        prior_snapshot = packed["prior_snapshot"]
+        old_allocations = packed["old_allocations"]
+        allocations = packed["allocations"]
+        unmet_demands = packed["unmet_demands"]
+        explanation = packed["explanation"]
+        resources_data = packed["resources_data"]
+        zones_data = packed["zones_data"]
+        app_state = self._get_state()
 
         fulfilled_by_zone_type: Dict[str, Dict[str, float]] = {}
         resources_by_id = {r.id: r for r in self.db.query(Resource).all()}
@@ -294,7 +379,7 @@ class OrchestrationService:
         delta["moves"] = self._moves(old_allocations, allocations, resources_map)
         old_zone_map = {z["id"]: z for z in prior_snapshot.get("zones", [])}
         delta["priority_changes"] = []
-        for z in zones:
+        for z in self.db.query(Zone).filter(Zone.status == "active").all():
             old_p = old_zone_map.get(z.id, {}).get("priority_score")
             if old_p is not None and abs((z.priority_score or 0) - old_p) >= 0.01:
                 delta["priority_changes"].append({
@@ -557,8 +642,10 @@ class OrchestrationService:
                 commit=False,
             )
             self.db.commit()
+            self._emit_pending()
         except Exception as exc:
             self.db.rollback()
+            self._pending_events.clear()
             return {"error": "apply_failed", "details": [str(exc)], "status_code": 500}
 
         return {
@@ -606,6 +693,7 @@ class OrchestrationService:
             commit=False,
         )
         self.db.commit()
+        self._emit_pending()
         return {
             "status": "rejected",
             "plan_id": plan_id,
@@ -747,6 +835,8 @@ class OrchestrationService:
         self._get_state()
         self._log_event("RESOURCE_STATE_CHANGED", "Simulation reset to empty seeded inventory", agent="Simulation Engine")
         self.db.commit()
+        self._emit_pending()
+        self._publish_scenario("RESET")
         return {"status": "reset"}
 
     def load_demo(self) -> Dict:
@@ -760,6 +850,7 @@ class OrchestrationService:
                 correlation_id=correlation_id, auto_replan=False,
             ))
         plan = self.generate_allocation_plan(correlation_id=correlation_id, trigger="load_demo")
+        self._publish_scenario("LOAD SCENARIO", correlation_id=correlation_id, extra={"plan_id": plan.get("plan_id")})
         return {"status": "loaded", "reports": reports, "plan": plan, "correlation_id": correlation_id}
 
     def inject_urgent_zone_a(self) -> Dict:
@@ -768,12 +859,15 @@ class OrchestrationService:
         blocked.append({"zone_id": "ZONE_A", "reason": "two rescue routes inaccessible", "blocked": False})
         state.blocked_routes = blocked
         self.db.commit()
-        return self.process_incident_report(
+        self._emit_pending()
+        result = self.process_incident_report(
             URGENT_ZONE_A_REPORT,
             source="simulation",
             zone_id="ZONE_A",
             auto_replan=True,
         )
+        self._publish_scenario("INJECT URGENT REPORT", extra={"zone_id": "ZONE_A"})
+        return result
 
     def disable_resource(self, resource_id: str) -> Dict:
         old = self._current_snapshot()
@@ -790,10 +884,12 @@ class OrchestrationService:
             new_state={"status": "unavailable"},
         )
         self.db.commit()
+        self._emit_pending()
         should, reason, details = self.replanning_agent.should_replan(old, self._current_snapshot(), self._allocation_dicts())
         plan = None
         if should:
             plan = self.generate_allocation_plan(trigger=reason)
+        self._publish_scenario("DISABLE RESOURCE", extra={"resource_id": resource_id})
         return {"resource_id": resource_id, "status": "unavailable", "replanning_required": should, "plan": plan}
 
     def block_route(self, zone_id: str = "ZONE_A") -> Dict:
@@ -803,16 +899,25 @@ class OrchestrationService:
         state.blocked_routes = blocked
         self._log_event("RESOURCE_STATE_CHANGED", f"Route into {zone_id} blocked", agent="Simulation Engine")
         self.db.commit()
+        self._emit_pending()
         plan = self.generate_allocation_plan(trigger=f"Route to {zone_id} unavailable")
+        self._publish_scenario("BLOCK ROUTE", extra={"zone_id": zone_id, "plan_id": plan.get("plan_id")})
         return {"blocked": zone_id, "plan": plan}
 
     def increase_demand(self, zone_id: str = "ZONE_A") -> Dict:
-        return self.process_incident_report(
+        result = self.process_incident_report(
             f"{zone_id} demand surge. Approximately 1500 additional people affected. Immediate support required.",
             source="simulation",
             zone_id=zone_id,
             auto_replan=True,
         )
+        self._publish_scenario("INCREASE DEMAND", extra={"zone_id": zone_id})
+        return result
+
+    def run_replan(self) -> Dict:
+        plan = self.generate_allocation_plan(trigger="manual_replan")
+        self._publish_scenario("RUN REPLAN", extra={"plan_id": plan.get("plan_id")})
+        return plan
 
     def _update_zone_priority(self, zone: Zone, incident: Incident):
         incidents = self.db.query(Incident).filter(Incident.zone_id == zone.id, Incident.status == "active").all()
@@ -946,6 +1051,23 @@ class OrchestrationService:
             "eta_minutes": resource.eta_minutes,
         }
 
+    def _publish_scenario(self, summary: str, correlation_id: Optional[str] = None, extra: Optional[Dict] = None):
+        from app.core.events import build_event, event_bus
+        event_bus.publish(build_event(
+            "scenario.updated",
+            summary,
+            correlation_id=correlation_id,
+            actor="operator",
+            extra=extra,
+        ))
+
+    def _emit_pending(self):
+        from app.core.events import event_bus
+        pending = list(self._pending_events)
+        self._pending_events.clear()
+        for event in pending:
+            event_bus.publish(event)
+
     def _log_event(
         self,
         event_type: str,
@@ -958,8 +1080,11 @@ class OrchestrationService:
         commit: bool = True,
         reason: Optional[str] = None,
     ):
+        from app.core.events import events_from_audit
+
+        audit_id = f"evt_{uuid.uuid4().hex[:8]}"
         self.db.add(AuditEvent(
-            id=f"evt_{uuid.uuid4().hex[:8]}",
+            id=audit_id,
             event_type=event_type,
             description=description,
             actor=actor or "system",
@@ -969,9 +1094,22 @@ class OrchestrationService:
             reason=reason or description,
             correlation_id=correlation_id,
         ))
+        self._pending_events.extend(events_from_audit(
+            audit_id=audit_id,
+            audit_type=event_type,
+            description=description,
+            actor=actor,
+            agent=agent,
+            correlation_id=correlation_id,
+            new_state=new_state,
+            previous_state=previous_state,
+        ))
         if not commit:
             return
         try:
             self.db.commit()
         except Exception:
             self.db.rollback()
+            self._pending_events.clear()
+            return
+        self._emit_pending()
